@@ -45,6 +45,12 @@ const LOG_EVENT_TYPES = [
 
 // Function to get dynamic prompt by phone number
 async function getPromptByPhoneNumber(toPhoneNumber) {
+
+    console.log('Fetching prompt for phone number:', toPhoneNumber);
+    if (!toPhoneNumber) {
+        console.error('No phone number provided.');
+        return null;
+    }
     // Step 1: Fetch tenant_id from phone_numbers table
     const { data: phoneNumberData, error: phoneNumberError } = await supabase
         .from('phone_numbers')
