@@ -26,6 +26,11 @@ const SYSTEM_MESSAGE = 'You are a helpful and bubbly AI assistant who loves to c
 const VOICE = 'alloy';
 const PORT = process.env.PORT || 5050; // Allow dynamic port assignment
 
+// Listen on 0.0.0.0 instead of localhost
+app.listen(port, '0.0.0.0', () => {
+    console.log(`Server running on port ${port}`);
+  });
+
 // List of Event Types to log to the console. See OpenAI Realtime API Documentation. (session.updated is handled separately.)
 const LOG_EVENT_TYPES = [
     'response.content.done',
