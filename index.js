@@ -10,7 +10,9 @@ dotenv.config();
 
 // Retrieve the OpenAI API key from environment variables. You must have OpenAI Realtime API access.
 const { OPENAI_API_KEY } = process.env;
-const express = require('express');
+
+import express from 'express';
+
 const app = express();
 
 
