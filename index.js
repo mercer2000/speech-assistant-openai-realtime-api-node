@@ -6,15 +6,20 @@ import dotenv from 'dotenv';
 import fastifyFormBody from '@fastify/formbody';
 import fastifyWs from '@fastify/websocket';
 import express from 'express';
+import { createClient } from '@supabase/supabase-js'; // Import Supabase client
 
 // Load environment variables
 dotenv.config();
 
-const { OPENAI_API_KEY } = process.env;
-if (!OPENAI_API_KEY) {
-    console.error('Missing OpenAI API key. Please set it in the .env file.');
+const { OPENAI_API_KEY, SUPABASE_URL, SUPABASE_KEY } = process.env;
+
+if (!OPENAI_API_KEY || !SUPABASE_URL || !SUPABASE_KEY) {
+    console.error('Missing necessary environment variables. Please set them in the .env file.');
     process.exit(1);
 }
+
+// Initialize Supabase client
+const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
 
 const app = express();
 
@@ -24,7 +29,6 @@ fastify.register(fastifyFormBody);
 fastify.register(fastifyWs);
 
 // Constants
-const SYSTEM_MESSAGE = 'You are a helpful and bubbly AI assistant who loves to chat about anything the user is interested in... (rest of message)';
 const VOICE = 'alloy';
 const PORT = process.env.PORT || 5050;
 
@@ -39,6 +43,37 @@ const LOG_EVENT_TYPES = [
     'session.created'
 ];
 
+// Function to get dynamic prompt by phone number
+async function getPromptByPhoneNumber(toPhoneNumber) {
+    // Step 1: Fetch tenant_id from phone_numbers table
+    const { data: phoneNumberData, error: phoneNumberError } = await supabase
+        .from('phone_numbers')
+        .select('tenant_id')
+        .eq('phone_number', toPhoneNumber)
+        .single();
+
+    if (phoneNumberError || !phoneNumberData) {
+        console.error('Error fetching tenant_id:', phoneNumberError);
+        return null;
+    }
+
+    const tenantId = phoneNumberData.tenant_id;
+
+    // Step 2: Fetch the prompt from prompts table using tenant_id
+    const { data: promptData, error: promptError } = await supabase
+        .from('prompts')
+        .select('prompt_text')
+        .eq('tenant_id', tenantId)
+        .single();
+
+    if (promptError || !promptData) {
+        console.error('Error fetching prompt_text:', promptError);
+        return null;
+    }
+
+    return promptData.prompt_text;
+}
+
 // Server start listener
 app.listen(PORT, '0.0.0.0', () => {
     console.log(`Server running on port ${PORT}`);
@@ -51,15 +86,19 @@ fastify.get('/', async (request, reply) => {
 
 // Route for Twilio incoming/outgoing calls
 fastify.all('/incoming-call', async (request, reply) => {
+    const toPhoneNumber = request.body.To || request.query.To; // Get the TO phone number from the request
+
+    // Dynamically fetch the prompt based on the incoming TO phone number
+    const systemMessage = await getPromptByPhoneNumber(toPhoneNumber) || 'You are a helpful and bubbly AI assistant...'; // Fallback to default message if not found
+
     const twimlResponse = `<?xml version="1.0" encoding="UTF-8"?>
                           <Response>
-                              <Say>Please wait while we connect your call to the A. I. voice assistant...</Say>
-                              <Pause length="1"/>
-                              <Say>O.K. you can start talking!</Say>
+                              <Say>Hello, how can I help you.</Say>                             
                               <Connect>
-                                  <Stream url="wss://${request.headers.host}/media-stream" />
+                                  <Stream url="wss://${request.headers.host}/media-stream?message=${encodeURIComponent(systemMessage)}" />
                               </Connect>
                           </Response>`;
+
     reply.type('text/xml').send(twimlResponse);
 });
 
@@ -67,6 +106,9 @@ fastify.all('/incoming-call', async (request, reply) => {
 fastify.register(async (fastify) => {
     fastify.get('/media-stream', { websocket: true }, (connection, req) => {
         console.log('Client connected');
+
+        // Parse the system message from the query string
+        const systemMessage = decodeURIComponent(req.query.message) || 'You are a helpful and bubbly AI assistant...';
 
         const openAiWs = new WebSocket('wss://api.openai.com/v1/realtime?model=gpt-4o-realtime-preview-2024-10-01', {
             headers: {
@@ -86,7 +128,7 @@ fastify.register(async (fastify) => {
                     input_audio_format: 'g711_ulaw',
                     output_audio_format: 'g711_ulaw',
                     voice: VOICE,
-                    instructions: SYSTEM_MESSAGE,
+                    instructions: systemMessage, // Use dynamic system message here
                     modalities: ["text", "audio"],
                     temperature: 0.8,
                 }
