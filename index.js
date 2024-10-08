@@ -32,9 +32,10 @@ const VOICE = 'alloy';
 const PORT = process.env.PORT || 5050; // Allow dynamic port assignment
 
 // Listen on 0.0.0.0 instead of localhost
-app.listen(port, '0.0.0.0', () => {
-    console.log(`Server running on port ${port}`);
-  });
+app.listen(PORT, '0.0.0.0', () => {
+    console.log(`Server running on port ${PORT}`);
+});
+
 
 // List of Event Types to log to the console. See OpenAI Realtime API Documentation. (session.updated is handled separately.)
 const LOG_EVENT_TYPES = [
