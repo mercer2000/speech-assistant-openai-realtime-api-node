@@ -90,7 +90,7 @@ fastify.all('/incoming-call', async (request, reply) => {
     const toPhoneNumber = request.body.To || request.query.To; // Get the TO phone number from the request
 
     // Dynamically fetch the prompt based on the incoming TO phone number
-    const systemMessage = await getPromptByPhoneNumber(toPhoneNumber) || 'You are a helpful and bubbly AI assistant who loves to chat about anything the user is interested about and is prepared to offer them facts. You have a penchant for dad jokes, owl jokes, and rickrolling – subtly. Always stay positive, but work in a joke when appropriate.';
+    const systemMessage = await getPromptByPhoneNumber(toPhoneNumber) || 'You are a helpful and bubbly AI assistant...';
 
     const twimlResponse = `<?xml version="1.0" encoding="UTF-8"?>
                           <Response>
@@ -188,6 +188,15 @@ fastify.register(async (fastify) => {
                     transcript.push({ speaker: 'Assistant', text: assistantResponse });
                 }
 
+                // Handle user's speech recognition results
+                if (response.type === 'speech.recognition.result') {
+                    const userSpeech = response.text;
+                    console.log('User said:', userSpeech);
+
+                    // Add user's speech to transcript
+                    transcript.push({ speaker: 'User', text: userSpeech });
+                }
+
                 // Handle end of assistant's response
                 if (response.type === 'response.done') {
                     console.log('Assistant has finished speaking.');
@@ -227,24 +236,6 @@ fastify.register(async (fastify) => {
             }
         });
 
-        // Handle speech recognition results and add to transcript
-        openAiWs.on('message', (data) => {
-            try {
-                const response = JSON.parse(data);
-
-                // Handle user's speech recognition results
-                if (response.type === 'speech.recognition.result') {
-                    const userSpeech = response.text;
-                    console.log('User said:', userSpeech);
-
-                    // Add user's speech to transcript
-                    transcript.push({ speaker: 'User', text: userSpeech });
-                }
-            } catch (error) {
-                console.error('Error processing OpenAI message:', error, 'Raw message:', data);
-            }
-        });
-
         // Handle connection close
         connection.socket.on('close', () => {
             if (openAiWs.readyState === WebSocket.OPEN) openAiWs.close();
@@ -258,7 +249,7 @@ fastify.register(async (fastify) => {
 
             // Optionally, save the transcript to a database or file here
             // For example:
-            // saveTranscript(transcript);
+            // saveTranscriptToDatabase(transcript);
         });
 
         // Handle WebSocket close and errors
@@ -272,8 +263,8 @@ fastify.register(async (fastify) => {
     });
 });
 
-// Start the Fastify server
-fastify.listen({ port: PORT }, (err) => {
+// Start the Fastify server and bind to 0.0.0.0
+fastify.listen({ port: PORT, host: '0.0.0.0' }, (err) => {
     if (err) {
         console.error(err);
         process.exit(1);
