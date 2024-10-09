@@ -56,6 +56,7 @@ async function getPromptByPhoneNumber(toPhoneNumber) {
         .from('phone_numbers')
         .select('tenant_id')
         .eq('phone_number', toPhoneNumber)
+        .eq('prompt_type', 1)
         .single();
 
     if (phoneNumberError || !phoneNumberData) {
