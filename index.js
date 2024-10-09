@@ -55,8 +55,7 @@ async function getPromptByPhoneNumber(toPhoneNumber) {
     const { data: phoneNumberData, error: phoneNumberError } = await supabase
         .from('phone_numbers')
         .select('tenant_id')
-        .eq('phone_number', toPhoneNumber)
-        .eq('prompt_type', 1)
+        .eq('phone_number', toPhoneNumber) 
         .single();
 
     if (phoneNumberError || !phoneNumberData) {
@@ -66,17 +65,21 @@ async function getPromptByPhoneNumber(toPhoneNumber) {
 
     const tenantId = phoneNumberData.tenant_id;
 
-    // Step 2: Fetch the prompt from prompts table using tenant_id
-    const { data: promptData, error: promptError } = await supabase
-        .from('prompts')
-        .select('prompt_text')
-        .eq('tenant_id', tenantId)
-        .single();
+// Step 2: Fetch the prompt from prompts table using tenant_id
+const { data: promptData, error: promptError } = await supabase
+    .from('prompts')
+    .select('prompt_text')
+    .eq('tenant_id', tenantId)
+    .eq('prompt_type', 1)
+    .eq('is_deleted', false)
+    .order('created_at', { ascending: false })
+    .limit(1)
+    .single();
 
-    if (promptError || !promptData) {
-        console.error('Error fetching prompt_text:', promptError);
-        return null;
-    }
+if (promptError || !promptData) {
+    console.error('Error fetching prompt_text:', promptError);
+    return null;
+}
 
     return promptData.prompt_text;
 }
