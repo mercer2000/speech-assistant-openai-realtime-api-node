@@ -55,12 +55,18 @@ async function getPromptByPhoneNumber(toPhoneNumber) {
         .eq('phone_number', toPhoneNumber)
         .single();
 
-    if (phoneNumberError || !phoneNumberData) {
+    if (phoneNumberError) {
         console.error('Error fetching tenant_id:', phoneNumberError);
         return null;
     }
 
+    if (!phoneNumberData) {
+        console.log('No matching phone number found in database');
+        return null;
+    }
+
     const tenantId = phoneNumberData.tenant_id;
+    console.log('Found tenant_id:', tenantId);
 
     // Step 2: Fetch the prompt from prompts table using tenant_id
     const { data: promptData, error: promptError } = await supabase
@@ -72,11 +78,17 @@ async function getPromptByPhoneNumber(toPhoneNumber) {
         .limit(1)
         .single();
 
-    if (promptError || !promptData) {
+    if (promptError) {
         console.error('Error fetching prompt_text:', promptError);
         return null;
     }
 
+    if (!promptData) {
+        console.log('No matching prompt found for tenant_id:', tenantId);
+        return null;
+    }
+
+    console.log('Retrieved prompt:', promptData.prompt_text);
     return promptData.prompt_text;
 }
 
@@ -91,6 +103,8 @@ fastify.all('/incoming-call', async (request, reply) => {
 
     // Dynamically fetch the prompt based on the incoming TO phone number
     const systemMessage = await getPromptByPhoneNumber(toPhoneNumber) || 'You are a helpful and bubbly AI assistant...';
+
+    console.log('Using system message:', systemMessage); // Log the system message being used
 
     const twimlResponse = `<?xml version="1.0" encoding="UTF-8"?>
                           <Response>
@@ -112,9 +126,9 @@ fastify.register(async (fastify) => {
 
         // Parse the system message from the query string
         const url = new URL(req.url, `http://${req.headers.host}`);
-        const systemMessage = url.searchParams.get('message') || 'You are a helpful and bubbly AI assistant...';
+        const systemMessage = decodeURIComponent(url.searchParams.get('message')) || 'You are a helpful and bubbly AI assistant...';
 
-        console.log('System message:', systemMessage);
+        console.log('System message in WebSocket:', systemMessage);
 
         const openAiWs = new WebSocket('wss://api.openai.com/v1/realtime?model=gpt-4o-realtime-preview-2024-10-01', {
             headers: {
