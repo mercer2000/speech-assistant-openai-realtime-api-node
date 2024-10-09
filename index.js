@@ -1,16 +1,16 @@
-// Import necessary modules and initialize Fastify and Express
+// Import necessary modules and initialize Fastify
 import Fastify from 'fastify';
 import WebSocket from 'ws';
 import fs from 'fs';
 import dotenv from 'dotenv';
 import fastifyFormBody from '@fastify/formbody';
 import fastifyWs from '@fastify/websocket';
-import express from 'express';
 import { createClient } from '@supabase/supabase-js'; // Import Supabase client
 
-// Load environment variables
+// Load environment variables from .env file
 dotenv.config();
 
+// Retrieve environment variables
 const { OPENAI_API_KEY, SUPABASE_URL, SUPABASE_KEY } = process.env;
 
 if (!OPENAI_API_KEY || !SUPABASE_URL || !SUPABASE_KEY) {
@@ -21,8 +21,6 @@ if (!OPENAI_API_KEY || !SUPABASE_URL || !SUPABASE_KEY) {
 // Initialize Supabase client
 const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
 
-const app = express();
-
 // Initialize Fastify
 const fastify = Fastify();
 fastify.register(fastifyFormBody);
@@ -30,9 +28,9 @@ fastify.register(fastifyWs);
 
 // Constants
 const VOICE = 'alloy';
-const PORT = process.env.PORT || 5050;
+const PORT = process.env.PORT || 5050; // Allow dynamic port assignment
 
-// List of Event Types to log
+// List of Event Types to log to the console. See OpenAI Realtime API Documentation.
 const LOG_EVENT_TYPES = [
     'response.content.done',
     'rate_limits.updated',
@@ -82,26 +80,23 @@ async function getPromptByPhoneNumber(toPhoneNumber) {
     return promptData.prompt_text;
 }
 
-// Server start listener
-app.listen(PORT, '0.0.0.0', () => {
-    console.log(`Server running on port ${PORT}`);
-});
-
-// Root route
+// Root Route
 fastify.get('/', async (request, reply) => {
     reply.send({ message: 'Twilio Media Stream Server is running!' });
 });
 
-// Route for Twilio incoming/outgoing calls
+// Route for Twilio to handle incoming and outgoing calls
 fastify.all('/incoming-call', async (request, reply) => {
     const toPhoneNumber = request.body.To || request.query.To; // Get the TO phone number from the request
 
     // Dynamically fetch the prompt based on the incoming TO phone number
-    const systemMessage = await getPromptByPhoneNumber(toPhoneNumber) || 'You are a helpful and bubbly AI assistant...'; // Fallback to default message if not found
+    const systemMessage = await getPromptByPhoneNumber(toPhoneNumber) || 'You are a helpful and bubbly AI assistant who loves to chat about anything the user is interested about and is prepared to offer them facts. You have a penchant for dad jokes, owl jokes, and rickrolling – subtly. Always stay positive, but work in a joke when appropriate.';
 
     const twimlResponse = `<?xml version="1.0" encoding="UTF-8"?>
                           <Response>
-                              <Say>Hello, how can I help you.</Say>
+                              <Say>Please wait while we connect your call to the A. I. voice assistant, powered by Twilio and the Open-A.I. Realtime API</Say>
+                              <Pause length="1"/>
+                              <Say>O.K. you can start talking!</Say>
                               <Connect>
                                   <Stream url="wss://${request.headers.host}/media-stream?message=${encodeURIComponent(systemMessage)}" />
                               </Connect>
@@ -130,10 +125,10 @@ fastify.register(async (fastify) => {
 
         let streamSid = null;
 
-        // Function to send session update
-        const sendSessionUpdate = () => {
-            console.log('System message:', systemMessage);
+        // Initialize transcript array to store conversation
+        const transcript = [];
 
+        const sendSessionUpdate = () => {
             const sessionUpdate = {
                 type: 'session.update',
                 session: {
@@ -155,13 +150,13 @@ fastify.register(async (fastify) => {
             openAiWs.send(JSON.stringify(sessionUpdate));
         };
 
-        // OpenAI WebSocket "open" event
+        // Open event for OpenAI WebSocket
         openAiWs.on('open', () => {
-            console.log('Connected to OpenAI Realtime API');
-            setTimeout(sendSessionUpdate, 250);
+            console.log('Connected to the OpenAI Realtime API');
+            setTimeout(sendSessionUpdate, 250); // Ensure connection stability, send after .25 seconds
         });
 
-        // Handle messages from OpenAI WebSocket
+        // Listen for messages from the OpenAI WebSocket (and send to Twilio if necessary)
         openAiWs.on('message', (data) => {
             try {
                 const response = JSON.parse(data);
@@ -170,12 +165,11 @@ fastify.register(async (fastify) => {
                     console.log(`Received event: ${response.type}`, response);
                 }
 
-                // Handle session updates
                 if (response.type === 'session.updated') {
                     console.log('Session updated successfully:', response);
                 }
 
-                // Handle audio delta and transcription events
+                // Handle assistant's audio responses
                 if (response.type === 'response.audio.delta' && response.delta) {
                     const audioDelta = {
                         event: 'media',
@@ -185,28 +179,20 @@ fastify.register(async (fastify) => {
                     connection.socket.send(JSON.stringify(audioDelta));
                 }
 
-                // Handle speech recognition results
-                if (response.type === 'speech.recognition.result') {
-                    console.log('Transcription:', response.text);
-                    // Here you can add logic to store or process the transcription
-                    // For example, you might want to send it to your database or analyze it
-                }
-
-                // Detect "GOODBYE" in text responses
+                // Handle assistant's text responses and add to transcript
                 if (response.type === 'response.content' && response.content) {
-                    const textResponse = response.content;
-                    console.log('Text response:', textResponse);
+                    const assistantResponse = response.content;
+                    console.log('Assistant response:', assistantResponse);
 
-                    // If "GOODBYE" is detected, hang up the call
-                    if (textResponse.toLowerCase().includes('goodbye')) {
-                        console.log('Goodbye detected, ending the call...');
-                        const hangupResponse = `<?xml version="1.0" encoding="UTF-8"?>
-                                                <Response>
-                                                    <Hangup/>
-                                                </Response>`;
-                        connection.socket.send(hangupResponse);
-                    }
+                    // Add assistant's response to transcript
+                    transcript.push({ speaker: 'Assistant', text: assistantResponse });
                 }
+
+                // Handle end of assistant's response
+                if (response.type === 'response.done') {
+                    console.log('Assistant has finished speaking.');
+                }
+
             } catch (error) {
                 console.error('Error processing OpenAI message:', error, 'Raw message:', data);
             }
@@ -224,12 +210,13 @@ fastify.register(async (fastify) => {
                                 type: 'input_audio_buffer.append',
                                 audio: data.media.payload
                             };
+
                             openAiWs.send(JSON.stringify(audioAppend));
                         }
                         break;
                     case 'start':
                         streamSid = data.start.streamSid;
-                        console.log('Incoming stream started', streamSid);
+                        console.log('Incoming stream has started', streamSid);
                         break;
                     default:
                         console.log('Received non-media event:', data.event);
@@ -240,15 +227,43 @@ fastify.register(async (fastify) => {
             }
         });
 
+        // Handle speech recognition results and add to transcript
+        openAiWs.on('message', (data) => {
+            try {
+                const response = JSON.parse(data);
+
+                // Handle user's speech recognition results
+                if (response.type === 'speech.recognition.result') {
+                    const userSpeech = response.text;
+                    console.log('User said:', userSpeech);
+
+                    // Add user's speech to transcript
+                    transcript.push({ speaker: 'User', text: userSpeech });
+                }
+            } catch (error) {
+                console.error('Error processing OpenAI message:', error, 'Raw message:', data);
+            }
+        });
+
         // Handle connection close
         connection.socket.on('close', () => {
             if (openAiWs.readyState === WebSocket.OPEN) openAiWs.close();
             console.log('Client disconnected.');
+
+            // Output the transcript
+            console.log('Call Transcript:');
+            transcript.forEach((entry) => {
+                console.log(`${entry.speaker}: ${entry.text}`);
+            });
+
+            // Optionally, save the transcript to a database or file here
+            // For example:
+            // saveTranscript(transcript);
         });
 
         // Handle WebSocket close and errors
         openAiWs.on('close', () => {
-            console.log('Disconnected from OpenAI Realtime API');
+            console.log('Disconnected from the OpenAI Realtime API');
         });
 
         openAiWs.on('error', (error) => {
