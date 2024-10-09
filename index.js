@@ -45,7 +45,6 @@ const LOG_EVENT_TYPES = [
 
 // Function to get dynamic prompt by phone number
 async function getPromptByPhoneNumber(toPhoneNumber) {
-
     console.log('Fetching prompt for phone number:', toPhoneNumber);
     if (!toPhoneNumber) {
         console.error('No phone number provided.');
@@ -65,20 +64,20 @@ async function getPromptByPhoneNumber(toPhoneNumber) {
 
     const tenantId = phoneNumberData.tenant_id;
 
-// Step 2: Fetch the prompt from prompts table using tenant_id
-const { data: promptData, error: promptError } = await supabase
-    .from('prompts')
-    .select('prompt_text')
-    .eq('tenant_id', tenantId)
-    .eq('prompt_type', 1)
-    .order('created_at', { ascending: false })
-    .limit(1)
-    .single();
+    // Step 2: Fetch the prompt from prompts table using tenant_id
+    const { data: promptData, error: promptError } = await supabase
+        .from('prompts')
+        .select('prompt_text')
+        .eq('tenant_id', tenantId)
+        .eq('prompt_type', 1)
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .single();
 
-if (promptError || !promptData) {
-    console.error('Error fetching prompt_text:', promptError);
-    return null;
-}
+    if (promptError || !promptData) {
+        console.error('Error fetching prompt_text:', promptError);
+        return null;
+    }
 
     return promptData.prompt_text;
 }
@@ -99,9 +98,7 @@ fastify.all('/incoming-call', async (request, reply) => {
 
     // Dynamically fetch the prompt based on the incoming TO phone number
     const systemMessage = await getPromptByPhoneNumber(toPhoneNumber) || 'You are a helpful and bubbly AI assistant...'; // Fallback to default message if not found
-
-    console.log('System message:', systemMessage);
-
+    
     const twimlResponse = `<?xml version="1.0" encoding="UTF-8"?>
                           <Response>
                               <Say>Hello, how can I help you.</Say>                             
@@ -121,6 +118,8 @@ fastify.register(async (fastify) => {
         // Parse the system message from the query string
         const systemMessage = decodeURIComponent(req.query.message) || 'You are a helpful and bubbly AI assistant...';
 
+        console.log('System message:', systemMessage);
+
         const openAiWs = new WebSocket('wss://api.openai.com/v1/realtime?model=gpt-4o-realtime-preview-2024-10-01', {
             headers: {
                 Authorization: `Bearer ${OPENAI_API_KEY}`,
@@ -132,6 +131,8 @@ fastify.register(async (fastify) => {
 
         // Function to send session update
         const sendSessionUpdate = () => {
+            console.log('System message:', systemMessage);
+            
             const sessionUpdate = {
                 type: 'session.update',
                 session: {
