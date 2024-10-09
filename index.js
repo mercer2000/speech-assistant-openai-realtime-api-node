@@ -139,6 +139,14 @@ fastify.register(async (fastify) => {
 
         const url = new URL(req.url, `http://${req.headers.host}`);
         const messageKey = url.searchParams.get('key');
+
+        console.log('Received message key:', messageKey);
+        if (!messageKey) {
+            console.error('No message key provided.');
+            connection.socket.close();
+           
+        }
+
         let systemMessage = 'You are a helpful and bubbly AI assistant...';
 
         if (messageKey) {
