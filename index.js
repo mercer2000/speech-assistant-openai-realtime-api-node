@@ -140,9 +140,13 @@ fastify.register(async (fastify) => {
                     input_audio_format: 'g711_ulaw',
                     output_audio_format: 'g711_ulaw',
                     voice: VOICE,
-                    instructions: systemMessage, // Use dynamic system message here
+                    instructions: systemMessage,
                     modalities: ["text", "audio"],
                     temperature: 0.8,
+                    speech_recognition: {
+                        enabled: true,
+                        language: 'en'  // Set this to the appropriate language code
+                    }
                 }
             };
 
@@ -178,6 +182,13 @@ fastify.register(async (fastify) => {
                         media: { payload: Buffer.from(response.delta, 'base64').toString('base64') }
                     };
                     connection.send(JSON.stringify(audioDelta));
+                }
+
+                // Handle speech recognition results
+                if (response.type === 'speech.recognition.result') {
+                    console.log('Transcription:', response.text);
+                    // Here you can add logic to store or process the transcription
+                    // For example, you might want to send it to your database or analyze it
                 }
 
                 // Detect "GOODBYE" in text responses
