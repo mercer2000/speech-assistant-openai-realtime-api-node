@@ -71,7 +71,6 @@ const { data: promptData, error: promptError } = await supabase
     .select('prompt_text')
     .eq('tenant_id', tenantId)
     .eq('prompt_type', 1)
-    .eq('is_deleted', false)
     .order('created_at', { ascending: false })
     .limit(1)
     .single();
