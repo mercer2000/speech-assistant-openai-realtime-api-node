@@ -5,21 +5,30 @@ import fs from 'fs';
 import dotenv from 'dotenv';
 import fastifyFormBody from '@fastify/formbody';
 import fastifyWs from '@fastify/websocket';
-import { createClient } from '@supabase/supabase-js'; // Import Supabase client
+import { createClient as createSupabaseClient } from '@supabase/supabase-js';
+import { createClient as createRedisClient } from 'redis';
+import { v4 as uuidv4 } from 'uuid';
 
 // Load environment variables from .env file
 dotenv.config();
 
 // Retrieve environment variables
-const { OPENAI_API_KEY, SUPABASE_URL, SUPABASE_KEY } = process.env;
+const { OPENAI_API_KEY, SUPABASE_URL, SUPABASE_KEY, REDIS_URL } = process.env;
 
-if (!OPENAI_API_KEY || !SUPABASE_URL || !SUPABASE_KEY) {
+if (!OPENAI_API_KEY || !SUPABASE_URL || !SUPABASE_KEY || !REDIS_URL) {
     console.error('Missing necessary environment variables. Please set them in the .env file.');
     process.exit(1);
 }
 
 // Initialize Supabase client
-const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
+const supabase = createSupabaseClient(SUPABASE_URL, SUPABASE_KEY);
+
+// Initialize Redis client
+const redisClient = createRedisClient({
+    url: REDIS_URL || 'redis://red-cs3glllumphs738t7c30:6379'
+});
+
+redisClient.on('error', (err) => console.log('Redis Client Error', err));
 
 // Initialize Fastify
 const fastify = Fastify();
@@ -28,9 +37,9 @@ fastify.register(fastifyWs);
 
 // Constants
 const VOICE = 'alloy';
-const PORT = process.env.PORT || 5050; // Allow dynamic port assignment
+const PORT = process.env.PORT || 5050;
 
-// List of Event Types to log to the console. See OpenAI Realtime API Documentation.
+// List of Event Types to log to the console
 const LOG_EVENT_TYPES = [
     'response.content.done',
     'rate_limits.updated',
@@ -99,20 +108,24 @@ fastify.get('/', async (request, reply) => {
 
 // Route for Twilio to handle incoming and outgoing calls
 fastify.all('/incoming-call', async (request, reply) => {
-    const toPhoneNumber = request.body.To || request.query.To; // Get the TO phone number from the request
-
-    // Dynamically fetch the prompt based on the incoming TO phone number
+    const toPhoneNumber = request.body.To || request.query.To;
     const systemMessage = await getPromptByPhoneNumber(toPhoneNumber) || 'You are a helpful and bubbly AI assistant...';
+    console.log('Using system message:', systemMessage);
 
-    console.log('Using system message:', systemMessage); // Log the system message being used
+    // Generate a unique key for this system message
+    const messageKey = uuidv4();
+
+    // Store the system message in Redis with a 1-hour expiration
+    await redisClient.set(messageKey, systemMessage, {
+        EX: 3600 // 1 hour in seconds
+    });
 
     const twimlResponse = `<?xml version="1.0" encoding="UTF-8"?>
                           <Response>
-                              <Say>Please wait while we connect your call to the A. I. voice assistant, powered by Twilio and the Open-A.I. Realtime API</Say>
-                              <Pause length="1"/>
-                              <Say>O.K. you can start talking!</Say>
+                              
+                              <Say>Hello, how can I help you?</Say>
                               <Connect>
-                                  <Stream url="wss://${request.headers.host}/media-stream?message=${encodeURIComponent(systemMessage)}" />
+                                  <Stream url="wss://${request.headers.host}/media-stream?key=${messageKey}" />
                               </Connect>
                           </Response>`;
 
@@ -121,12 +134,21 @@ fastify.all('/incoming-call', async (request, reply) => {
 
 // WebSocket route for media-stream
 fastify.register(async (fastify) => {
-    fastify.get('/media-stream', { websocket: true }, (connection, req) => {
+    fastify.get('/media-stream', { websocket: true }, async (connection, req) => {
         console.log('Client connected');
 
-        // Parse the system message from the query string
         const url = new URL(req.url, `http://${req.headers.host}`);
-        const systemMessage = decodeURIComponent(url.searchParams.get('message')) || 'You are a helpful and bubbly AI assistant...';
+        const messageKey = url.searchParams.get('key');
+        let systemMessage = 'You are a helpful and bubbly AI assistant...';
+
+        if (messageKey) {
+            const storedMessage = await redisClient.get(messageKey);
+            if (storedMessage) {
+                systemMessage = storedMessage;
+            } else {
+                console.log('No message found for key:', messageKey);
+            }
+        }
 
         console.log('System message in WebSocket:', systemMessage);
 
@@ -155,7 +177,7 @@ fastify.register(async (fastify) => {
                     temperature: 0.8,
                     speech_recognition: {
                         enabled: true,
-                        language: 'en'  // Set this to the appropriate language code
+                        language: 'en'
                     }
                 }
             };
@@ -277,11 +299,24 @@ fastify.register(async (fastify) => {
     });
 });
 
-// Start the Fastify server and bind to 0.0.0.0
-fastify.listen({ port: PORT, host: '0.0.0.0' }, (err) => {
-    if (err) {
+// Start the Fastify server and connect to Redis
+const start = async () => {
+    try {
+        await redisClient.connect();
+        await fastify.listen({ port: PORT, host: '0.0.0.0' });
+        console.log(`Server is listening on port ${PORT}`);
+    } catch (err) {
         console.error(err);
         process.exit(1);
     }
-    console.log(`Server is listening on port ${PORT}`);
+};
+
+start();
+
+// Handle graceful shutdown
+process.on('SIGINT', async () => {
+    console.log('Shutting down gracefully');
+    await redisClient.quit();
+    await fastify.close();
+    process.exit(0);
 });
