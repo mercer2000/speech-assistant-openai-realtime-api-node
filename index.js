@@ -54,7 +54,7 @@ async function getPromptByPhoneNumber(toPhoneNumber) {
     const { data: phoneNumberData, error: phoneNumberError } = await supabase
         .from('phone_numbers')
         .select('tenant_id')
-        .eq('phone_number', toPhoneNumber) 
+        .eq('phone_number', toPhoneNumber)
         .single();
 
     if (phoneNumberError || !phoneNumberData) {
@@ -98,10 +98,10 @@ fastify.all('/incoming-call', async (request, reply) => {
 
     // Dynamically fetch the prompt based on the incoming TO phone number
     const systemMessage = await getPromptByPhoneNumber(toPhoneNumber) || 'You are a helpful and bubbly AI assistant...'; // Fallback to default message if not found
-    
+
     const twimlResponse = `<?xml version="1.0" encoding="UTF-8"?>
                           <Response>
-                              <Say>Hello, how can I help you.</Say>                             
+                              <Say>Hello, how can I help you.</Say>
                               <Connect>
                                   <Stream url="wss://${request.headers.host}/media-stream?message=${encodeURIComponent(systemMessage)}" />
                               </Connect>
@@ -116,7 +116,8 @@ fastify.register(async (fastify) => {
         console.log('Client connected');
 
         // Parse the system message from the query string
-        const systemMessage = decodeURIComponent(req.query.message) || 'You are a helpful and bubbly AI assistant...';
+        const url = new URL(req.url, `http://${req.headers.host}`);
+        const systemMessage = url.searchParams.get('message') || 'You are a helpful and bubbly AI assistant...';
 
         console.log('System message:', systemMessage);
 
@@ -132,7 +133,7 @@ fastify.register(async (fastify) => {
         // Function to send session update
         const sendSessionUpdate = () => {
             console.log('System message:', systemMessage);
-            
+
             const sessionUpdate = {
                 type: 'session.update',
                 session: {
@@ -181,7 +182,7 @@ fastify.register(async (fastify) => {
                         streamSid: streamSid,
                         media: { payload: Buffer.from(response.delta, 'base64').toString('base64') }
                     };
-                    connection.send(JSON.stringify(audioDelta));
+                    connection.socket.send(JSON.stringify(audioDelta));
                 }
 
                 // Handle speech recognition results
@@ -203,7 +204,7 @@ fastify.register(async (fastify) => {
                                                 <Response>
                                                     <Hangup/>
                                                 </Response>`;
-                        connection.send(hangupResponse);
+                        connection.socket.send(hangupResponse);
                     }
                 }
             } catch (error) {
@@ -212,7 +213,7 @@ fastify.register(async (fastify) => {
         });
 
         // Handle incoming messages from Twilio
-        connection.on('message', (message) => {
+        connection.socket.on('message', (message) => {
             try {
                 const data = JSON.parse(message);
 
@@ -240,7 +241,7 @@ fastify.register(async (fastify) => {
         });
 
         // Handle connection close
-        connection.on('close', () => {
+        connection.socket.on('close', () => {
             if (openAiWs.readyState === WebSocket.OPEN) openAiWs.close();
             console.log('Client disconnected.');
         });
