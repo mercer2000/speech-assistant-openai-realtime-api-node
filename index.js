@@ -97,6 +97,8 @@ fastify.all('/incoming-call', async (request, reply) => {
     // Dynamically fetch the prompt based on the incoming TO phone number
     const systemMessage = await getPromptByPhoneNumber(toPhoneNumber) || 'You are a helpful and bubbly AI assistant...'; // Fallback to default message if not found
 
+    console.log('System message:', systemMessage);
+
     const twimlResponse = `<?xml version="1.0" encoding="UTF-8"?>
                           <Response>
                               <Say>Hello, how can I help you.</Say>                             
