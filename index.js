@@ -118,13 +118,19 @@ fastify.post('/incoming-call', async (request, reply) => {
     }
 });
 
-// WebSocket route for media-stream
 fastify.register(async (fastify) => {
     fastify.get('/media-stream', { websocket: true }, async (connection, req) => {
         console.log('WebSocket client connected');
-        console.log('WebSocket request query:', req.query);
+        console.log('WebSocket request URL:', req.url);
 
-        const callSid = req.query.callSid;
+        // Parse the URL manually to extract the callSid
+        const urlParts = req.url.split('?');
+        let callSid = null;
+        if (urlParts.length > 1) {
+            const queryParams = new URLSearchParams(urlParts[1]);
+            callSid = queryParams.get('callSid');
+        }
+
         if (!callSid) {
             console.error('No "callSid" provided in query parameters');
             connection.socket.send(JSON.stringify({ error: 'No callSid provided' }));
