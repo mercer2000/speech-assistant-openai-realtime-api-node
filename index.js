@@ -72,7 +72,7 @@ fastify.register(async (fastify) => {
 
         const queryParams = new URLSearchParams(req.raw.url.split('?')[1]); // Get query params
         const callSid = queryParams.get('CallSid') || 'UnknownCallSid';
-        console.log(`Incoming call from ${queryParams}`);
+        console.log(`Incoming call from ${req.raw.url}`);
 
 
         const openAiWs = new WebSocket('wss://api.openai.com/v1/realtime?model=gpt-4o-realtime-preview-2024-10-01', {
