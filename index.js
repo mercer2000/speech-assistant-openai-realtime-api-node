@@ -114,13 +114,37 @@ function generateTwimlResponse(hostname, callSid) {
             <Response>
                 <Say>Hello, how can I help you?</Say>
                 <Connect>
-                    <Stream url="wss://${hostname}/media-stream?callSid=${encodeURIComponent(callSid)}" />
+                    <Stream url="wss://${hostname}/media-stream?callSid=${encodeURIComponent(callSid)}"/>
                 </Connect>
             </Response>`;
 }
 
+function extractCallSid(req) {
+    // Try to get callSid from query parameters
+    const url = new URL(req.url, `http://${req.headers.host}`);
+    const callSid = url.searchParams.get('callSid');
+    if (callSid) return callSid;
+
+    // If not in query params, check Sec-WebSocket-Protocol header
+    if (req.headers['sec-websocket-protocol']) {
+        const protocols = req.headers['sec-websocket-protocol'].split(',');
+        const callSidProtocol = protocols.find(p => p.trim().startsWith('callSid='));
+        if (callSidProtocol) {
+            return callSidProtocol.split('=')[1];
+        }
+    }
+
+    console.error('CallSid not found in query parameters or Sec-WebSocket-Protocol header');
+    console.log('Request headers:', req.headers);
+    console.log('Request URL:', req.url);
+    
+    return null;
+}
+
 function handleWebSocketConnection(connection, req) {
     console.log('WebSocket client connected');
+    console.log('Request URL:', req.url);
+    console.log('Request headers:', req.headers);
     
     const callSid = extractCallSid(req);
     if (!callSid) {
