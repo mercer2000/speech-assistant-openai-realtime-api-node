@@ -25,6 +25,7 @@ const SYSTEM_MESSAGE = 'You are a helpful and bubbly AI assistant who loves to c
 const VOICE = 'alloy';
 const PORT = process.env.PORT || 5050; // Allow dynamic port assignment
 
+
 // List of Event Types to log to the console. See the OpenAI Realtime API Documentation: https://platform.openai.com/docs/api-reference/realtime
 const LOG_EVENT_TYPES = [
     'response.content.done',
@@ -250,7 +251,7 @@ fastify.register(async (fastify) => {
     });
 });
 
-fastify.listen({ port: PORT }, (err) => {
+fastify.listen({ port: PORT, host: '0.0.0.0' }, (err) => {
     if (err) {
         console.error(err);
         process.exit(1);
