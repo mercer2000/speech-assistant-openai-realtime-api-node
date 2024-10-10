@@ -58,9 +58,8 @@ fastify.all('/incoming-call', async (request, reply) => {
 
     const twimlResponse = `<?xml version="1.0" encoding="UTF-8"?>
                           <Response>
-                              <Say>Please wait while we connect your call to the A. I. voice assistant, powered by Twilio and the Open-A.I. Realtime API</Say>
-                              <Pause length="1"/>
-                              <Say>O.K. you can start talking!</Say>
+                             
+                              <Say>Hello, how can I help you?</Say>
                               <Connect>
                                   <Stream url="wss://${request.headers.host}/media-stream?to=${encodeURIComponent(toNumber)}" />
                               </Connect>
@@ -83,6 +82,7 @@ fastify.register(async (fastify) => {
             .from('phone_numbers')
             .select('tenant_id')
             .eq('phone_number', toNumber)
+            .limit(1)
             .single();
 
         if (phoneError || !phoneData) {
@@ -100,6 +100,7 @@ fastify.register(async (fastify) => {
             .from('prompts')
             .select('prompt_text')
             .eq('tenant_id', tenantId)
+            .limit(1)
             .single();
 
         if (promptError || !promptData) {
