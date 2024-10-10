@@ -10,6 +10,10 @@ import { createClient as createRedisClient } from 'redis';
 // Load environment variables from .env file
 dotenv.config();
 
+// Near the top of the file, after the other constant definitions:
+const PORT = process.env.PORT || 5050; // Allow dynamic port assignment
+
+
 // Retrieve environment variables
 const { OPENAI_API_KEY, SUPABASE_URL, SUPABASE_KEY, REDIS_URL } = process.env;
 
