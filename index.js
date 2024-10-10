@@ -119,20 +119,25 @@ fastify.post('/incoming-call', async (request, reply) => {
 });
 
 fastify.register(async (fastify) => {
-    fastify.get('/media-stream', { websocket: true }, async (connection, req) => {
+    fastify.get('/media-stream', { websocket: true }, (connection, req) => {
         console.log('WebSocket client connected');
-        console.log('WebSocket request URL:', req.url);
+        console.log('Full request object:', req);
 
-        // Parse the URL manually to extract the callSid
-        const urlParts = req.url.split('?');
-        let callSid = null;
-        if (urlParts.length > 1) {
-            const queryParams = new URLSearchParams(urlParts[1]);
-            callSid = queryParams.get('callSid');
+        // Try to get callSid from different possible locations
+        let callSid = req.query.callSid || 
+                      (req.url && new URL(req.url, `http://${req.headers.host}`).searchParams.get('callSid'));
+
+        if (!callSid && req.headers['sec-websocket-protocol']) {
+            // If callSid is in Sec-WebSocket-Protocol header
+            const protocols = req.headers['sec-websocket-protocol'].split(',');
+            const callSidProtocol = protocols.find(p => p.trim().startsWith('callSid='));
+            if (callSidProtocol) {
+                callSid = callSidProtocol.split('=')[1];
+            }
         }
 
         if (!callSid) {
-            console.error('No "callSid" provided in query parameters');
+            console.error('No "callSid" provided in query parameters or headers');
             connection.socket.send(JSON.stringify({ error: 'No callSid provided' }));
             connection.socket.close();
             return;
@@ -141,23 +146,23 @@ fastify.register(async (fastify) => {
         console.log(`WebSocket connection initiated for CallSid: ${callSid}`);
 
         // Retrieve the system prompt from Redis
-        const SYSTEM_MESSAGE = await redisClient.get(`prompt:${callSid}`);
-        if (!SYSTEM_MESSAGE) {
-            console.error(`No system prompt found for CallSid: ${callSid}`);
-            connection.socket.send(JSON.stringify({ error: 'No system prompt found' }));
-            connection.socket.close();
-            return;
-        }
-
-        console.log(`Retrieved SYSTEM_MESSAGE for CallSid ${callSid}: ${SYSTEM_MESSAGE}`);
-
-        // OpenAI WebSocket connection
-        const openAiWs = new WebSocket('wss://api.openai.com/v1/realtime?model=gpt-4o-realtime-preview-2024-10-01', {
-            headers: {
-                Authorization: `Bearer ${OPENAI_API_KEY}`,
-                "OpenAI-Beta": "realtime=v1"
+        redisClient.get(`prompt:${callSid}`).then(SYSTEM_MESSAGE => {
+            if (!SYSTEM_MESSAGE) {
+                console.error(`No system prompt found for CallSid: ${callSid}`);
+                connection.socket.send(JSON.stringify({ error: 'No system prompt found' }));
+                connection.socket.close();
+                return;
             }
-        });
+
+            console.log(`Retrieved SYSTEM_MESSAGE for CallSid ${callSid}: ${SYSTEM_MESSAGE}`);
+
+            // OpenAI WebSocket connection setup
+            const openAiWs = new WebSocket('wss://api.openai.com/v1/realtime?model=gpt-4o-realtime-preview-2024-10-01', {
+                headers: {
+                    Authorization: `Bearer ${OPENAI_API_KEY}`,
+                    "OpenAI-Beta": "realtime=v1"
+                }
+            });
 
         let streamSid = null;
 
