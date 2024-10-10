@@ -118,7 +118,7 @@ fastify.post('/incoming-call', async (request, reply) => {
     }
 });
 
-fastify.register(async (fastify) => {
+ffastify.register(async (fastify) => {
     fastify.get('/media-stream', { websocket: true }, (connection, req) => {
         console.log('WebSocket client connected');
         console.log('Full request object:', req);
@@ -163,6 +163,45 @@ fastify.register(async (fastify) => {
                     "OpenAI-Beta": "realtime=v1"
                 }
             });
+    fastify.get('/media-stream', { websocket: true }, async (connection, req) => {
+        console.log('WebSocket client connected');
+        console.log('WebSocket request URL:', req.url);
+
+        // Parse the URL manually to extract the callSid
+        const urlParts = req.url.split('?');
+        let callSid = null;
+        if (urlParts.length > 1) {
+            const queryParams = new URLSearchParams(urlParts[1]);
+            callSid = queryParams.get('callSid');
+        }
+
+        if (!callSid) {
+            console.error('No "callSid" provided in query parameters');
+            connection.socket.send(JSON.stringify({ error: 'No callSid provided' }));
+            connection.socket.close();
+            return;
+        }
+
+        console.log(`WebSocket connection initiated for CallSid: ${callSid}`);
+
+        // Retrieve the system prompt from Redis
+        const SYSTEM_MESSAGE = await redisClient.get(`prompt:${callSid}`);
+        if (!SYSTEM_MESSAGE) {
+            console.error(`No system prompt found for CallSid: ${callSid}`);
+            connection.socket.send(JSON.stringify({ error: 'No system prompt found' }));
+            connection.socket.close();
+            return;
+        }
+
+        console.log(`Retrieved SYSTEM_MESSAGE for CallSid ${callSid}: ${SYSTEM_MESSAGE}`);
+
+        // OpenAI WebSocket connection
+        const openAiWs = new WebSocket('wss://api.openai.com/v1/realtime?model=gpt-4o-realtime-preview-2024-10-01', {
+            headers: {
+                Authorization: `Bearer ${OPENAI_API_KEY}`,
+                "OpenAI-Beta": "realtime=v1"
+            }
+        });
 
         let streamSid = null;
 
@@ -182,7 +221,7 @@ fastify.register(async (fastify) => {
 
             console.log('Sending session update:', JSON.stringify(sessionUpdate));
             openAiWs.send(JSON.stringify(sessionUpdate));
-        };
+        };  
 
         // Open event for OpenAI WebSocket
         openAiWs.on('open', () => {
