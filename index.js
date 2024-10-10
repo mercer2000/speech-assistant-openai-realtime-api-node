@@ -74,7 +74,7 @@ fastify.all('/incoming-call', async (request, reply) => {
 fastify.register(async (fastify) => {
     fastify.get('/media-stream', { websocket: true }, async (connection, req) => {
         console.log('Client connected');
-        console.log('URL:', req.url);
+        console.log('URL:', req);
 
         const url = new URL(req.url, `http://${req.headers.host}`);
         const callSid = url.searchParams.get('callSid');
