@@ -105,6 +105,7 @@ async function fetchSystemMessage() {
         const { data, error } = await supabase
             .from('prompts')
             .select('prompt_text')
+            .eq('prompt_type', 1)
             .limit(1)
             .single();
 
