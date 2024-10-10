@@ -43,29 +43,23 @@ const LOG_EVENT_TYPES = [
     'session.created'
 ];
 
+// Fallback SYSTEM_MESSAGE in case database fetch fails
+const FALLBACK_SYSTEM_MESSAGE = 'You are a helpful AI assistant.';
+
 // Root Route
 fastify.get('/', async (request, reply) => {
     reply.send({ message: 'Twilio Media Stream Server is running!' });
 });
 
 // Route for Twilio to handle incoming calls
-fastify.post('/incoming-call', async (request, reply) => {
+fastify.all('/incoming-call', async (request, reply) => {
     console.log('Received incoming call webhook');
     const { To: toNumber, From: fromNumber, CallSid: callSid } = request.body;
-
-    if (!toNumber) {
-        console.error('No "To" number provided in the request body');
-        return reply.code(400).send('Bad Request: Missing To number');
-    }
 
     console.log(`Incoming call to number: ${toNumber} from ${fromNumber}, CallSid: ${callSid}`);
 
     try {
-        const phoneData = await fetchPhoneData(toNumber);
-        const promptData = await fetchPromptData(phoneData.tenant_id);
-        await storeSystemPrompt(callSid, promptData.prompt_text);
-
-        const twimlResponse = generateTwimlResponse(request.hostname, callSid);
+        const twimlResponse = generateTwimlResponse(request.headers.host);
         return reply.type('text/xml').send(twimlResponse);
     } catch (error) {
         console.error('Error processing incoming call:', error);
@@ -79,116 +73,47 @@ fastify.register(async (fastify) => {
 });
 
 // Helper functions
-async function fetchPhoneData(toNumber) {
-    const { data, error } = await supabase
-        .from('phone_numbers')
-        .select('tenant_id')
-        .eq('phone_number', toNumber)
-        .limit(1)
-        .single();
-
-    if (error) throw new Error(`Error fetching tenant_id: ${error.message}`);
-    if (!data) throw new Error('No phone data found');
-    return data;
-}
-
-async function fetchPromptData(tenantId) {
-    const { data, error } = await supabase
-        .from('prompts')
-        .select('prompt_text')
-        .eq('tenant_id', tenantId)
-        .limit(1)
-        .single();
-
-    if (error) throw new Error(`Error fetching prompt: ${error.message}`);
-    if (!data) throw new Error('No prompt data found');
-    return data;
-}
-
-async function storeSystemPrompt(callSid, systemPrompt) {
-    await redisClient.set(`prompt:${callSid}`, systemPrompt, { EX: 3600 }); // Expires in 1 hour
-}
-
-function generateTwimlResponse(hostname, callSid) {
+function generateTwimlResponse(hostname) {
     return `<?xml version="1.0" encoding="UTF-8"?>
             <Response>
-                <Say>Hello, how can I help you?</Say>
+                <Say>Please wait while we connect your call to the A. I. voice assistant, powered by Twilio and the Open-A.I. Realtime API</Say>
+                <Pause length="1"/>
+                <Say>O.K. you can start talking!</Say>
                 <Connect>
-                    <Stream url="wss://${hostname}/media-stream?callSid=${encodeURIComponent(callSid)}"/>
+                    <Stream url="wss://${hostname}/media-stream" />
                 </Connect>
             </Response>`;
 }
 
-function extractCallSid(req) {
-    // Try to get callSid from query parameters
-    const url = new URL(req.url, `http://${req.headers.host}`);
-    const callSid = url.searchParams.get('callSid');
-    if (callSid) return callSid;
+async function handleWebSocketConnection(connection, req) {
+    console.log('Client connected');
 
-    // If not in query params, check Sec-WebSocket-Protocol header
-    if (req.headers['sec-websocket-protocol']) {
-        const protocols = req.headers['sec-websocket-protocol'].split(',');
-        const callSidProtocol = protocols.find(p => p.trim().startsWith('callSid='));
-        if (callSidProtocol) {
-            return callSidProtocol.split('=')[1];
-        }
+    try {
+        const systemMessage = await fetchSystemMessage() || FALLBACK_SYSTEM_MESSAGE;
+        setupOpenAIWebSocket(connection, systemMessage);
+    } catch (error) {
+        console.error('Error setting up WebSocket connection:', error);
+        connection.socket.close();
     }
-
-    console.error('CallSid not found in query parameters or Sec-WebSocket-Protocol header');
-    console.log('Request headers:', req.headers);
-    console.log('Request URL:', req.url);
-    
-    return null;
 }
 
-function handleWebSocketConnection(connection, req) {
-    console.log('WebSocket client connected');
-    console.log('Request URL:', req.url);
-    console.log('Request headers:', req.headers);
-    
-    const callSid = extractCallSid(req);
-    if (!callSid) {
-        console.error('No "callSid" provided');
-        connection.socket.send(JSON.stringify({ error: 'No callSid provided' }));
-        return connection.socket.close();
+async function fetchSystemMessage() {
+    try {
+        const { data, error } = await supabase
+            .from('prompts')
+            .select('prompt_text')
+            .limit(1)
+            .single();
+
+        if (error) throw error;
+        return data?.prompt_text;
+    } catch (error) {
+        console.error('Error fetching system message:', error);
+        return null;
     }
-
-    console.log(`WebSocket connection initiated for CallSid: ${callSid}`);
-
-    setupOpenAIWebSocket(connection, callSid);
 }
 
-function extractCallSid(req) {
-    // Try to get callSid from query parameters
-    const urlParts = req.url.split('?');
-    if (urlParts.length > 1) {
-        const queryParams = new URLSearchParams(urlParts[1]);
-        const callSid = queryParams.get('callSid');
-        if (callSid) return callSid;
-    }
-
-    // If not in query params, check Sec-WebSocket-Protocol header
-    if (req.headers['sec-websocket-protocol']) {
-        const protocols = req.headers['sec-websocket-protocol'].split(',');
-        const callSidProtocol = protocols.find(p => p.trim().startsWith('callSid='));
-        if (callSidProtocol) {
-            return callSidProtocol.split('=')[1];
-        }
-    }
-
-    return null;
-}
-
-async function setupOpenAIWebSocket(connection, callSid) {
-    const SYSTEM_MESSAGE = await redisClient.get(`prompt:${callSid}`);
-    if (!SYSTEM_MESSAGE) {
-        console.error(`No system prompt found for CallSid: ${callSid}`);
-        connection.socket.send(JSON.stringify({ error: 'No system prompt found' }));
-        return connection.socket.close();
-    }
-
-    console.log(`Retrieved SYSTEM_MESSAGE for CallSid ${callSid}: ${SYSTEM_MESSAGE}`);
-
+function setupOpenAIWebSocket(connection, systemMessage) {
     const openAiWs = new WebSocket('wss://api.openai.com/v1/realtime?model=gpt-4o-realtime-preview-2024-10-01', {
         headers: {
             Authorization: `Bearer ${OPENAI_API_KEY}`,
@@ -200,24 +125,23 @@ async function setupOpenAIWebSocket(connection, callSid) {
 
     openAiWs.on('open', () => {
         console.log('Connected to the OpenAI Realtime API');
-        setTimeout(() => sendSessionUpdate(openAiWs, SYSTEM_MESSAGE), 250);
+        setTimeout(() => sendSessionUpdate(openAiWs, systemMessage), 250);
     });
 
     openAiWs.on('message', (data) => handleOpenAIMessage(data, connection, streamSid));
 
     connection.socket.on('message', (message) => handleTwilioMessage(message, openAiWs, streamSid));
 
-    connection.socket.on('close', async () => {
+    connection.socket.on('close', () => {
         if (openAiWs.readyState === WebSocket.OPEN) openAiWs.close();
-        await redisClient.del(`prompt:${callSid}`);
-        console.log(`WebSocket closed for CallSid: ${callSid}`);
+        console.log('Client disconnected.');
     });
 
     openAiWs.on('close', () => console.log('Disconnected from the OpenAI Realtime API'));
     openAiWs.on('error', (error) => console.error('Error in the OpenAI WebSocket:', error));
 }
 
-function sendSessionUpdate(openAiWs, SYSTEM_MESSAGE) {
+function sendSessionUpdate(openAiWs, systemMessage) {
     const sessionUpdate = {
         type: 'session.update',
         session: {
@@ -225,7 +149,7 @@ function sendSessionUpdate(openAiWs, SYSTEM_MESSAGE) {
             input_audio_format: 'g711_ulaw',
             output_audio_format: 'g711_ulaw',
             voice: VOICE,
-            instructions: SYSTEM_MESSAGE,
+            instructions: systemMessage,
             modalities: ["text", "audio"],
             temperature: 0.8,
         }
