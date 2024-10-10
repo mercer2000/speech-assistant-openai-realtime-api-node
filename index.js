@@ -72,25 +72,31 @@ fastify.all('/incoming-call', async (request, reply) => {
 fastify.register(async (fastify) => {
     fastify.get('/media-stream', { websocket: true }, async (connection, req) => {
         console.log('Client connected');
+        console.log('Debugging: req object contents:', JSON.stringify(req, null, 2));
 
-        // Extract 'to' from query parameters
-        const toNumber = req.query.to;
-        console.log(`WebSocket connection initiated for number: ${toNumber}`);
-
-        // Fetch tenant_id from phone_numbers table
-        const { data: phoneData, error: phoneError } = await supabase
-            .from('phone_numbers')
-            .select('tenant_id')
-            .eq('phone_number', toNumber)
-            .limit(1)
-            .single();
-
-        if (phoneError || !phoneData) {
-            console.error('Error fetching tenant_id from phone_numbers:', phoneError || 'No data returned');
-            // Close connection if tenant_id is not found
-            connection.socket.close();
-            return;
-        }
+           // Extract 'to' from query parameters
+           const toNumber = req.query.to;
+           if (!toNumber) {
+               console.error('No "to" number provided in query parameters');
+               connection.socket.close();
+               return;
+           }
+           console.log(`WebSocket connection initiated for number: ${toNumber}`);
+   
+           // Fetch tenant_id from phone_numbers table
+           const { data: phoneData, error: phoneError } = await supabase
+               .from('phone_numbers')
+               .select('tenant_id')
+               .eq('phone_number', toNumber)
+               .limit(1)
+               .single();
+   
+           if (phoneError || !phoneData) {
+               console.error('Error fetching tenant_id from phone_numbers:', phoneError || 'No data returned');
+               connection.socket.close();
+               return;
+           }
+   
 
         const tenantId = phoneData.tenant_id;
         console.log(`Found tenant_id: ${tenantId} for phone number: ${toNumber}`);
