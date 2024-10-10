@@ -70,22 +70,28 @@ fastify.all('/incoming-call', async (request, reply) => {
     }
 });
 
-
 // WebSocket route for media-stream
 fastify.register(async (fastify) => {
-    fastify.get('/media-stream', { websocket: true }, (connection, req) => {
+    fastify.get('/media-stream', { websocket: true }, async (connection, req) => {
         console.log('Client connected');
-        console.log ('URL:', req.url);
+        console.log('URL:', req.url);
 
-         // Parse the callSid from the URL
-         const url = new URL(req.url, `http://${req.headers.host}`);
-         const callSid = url.searchParams.get('callSid');
- 
-         if (!callSid) {
-             console.error('No callSid provided in WebSocket connection');
-             connection.socket.close();
-             return;
-         }
+        const url = new URL(req.url, `http://${req.headers.host}`);
+        const callSid = url.searchParams.get('callSid');
+
+        if (!callSid) {
+            console.error('No callSid provided in WebSocket connection');
+            connection.socket.close();
+            return;
+        }
+
+        let systemMessage;
+        try {
+            systemMessage = await fetchSystemMessage(callSid);
+        } catch (error) {
+            console.error('Error fetching system message:', error);
+            systemMessage = FALLBACK_SYSTEM_MESSAGE;
+        }
 
         const openAiWs = new WebSocket('wss://api.openai.com/v1/realtime?model=gpt-4o-realtime-preview-2024-10-01', {
             headers: {
@@ -96,47 +102,14 @@ fastify.register(async (fastify) => {
 
         let streamSid = null;
 
-        const sendInitialConversationItem = () => {
-            const initialConversationItem = {
-                type: 'conversation.item.create',
-                item: {
-                    type: 'message',
-                    role: 'user',
-                    content: [
-                        {
-                            type: 'input_text',
-                            text: 'Greet the user with "Hello there! I am an AI voice assistant powered by Twilio and the OpenAI Realtime API. You can ask me for facts, jokes, or anything you can imagine. How can I help you?"'
-                        }
-                    ]
-                }
-            };
-
-            console.log('Sending initial conversation item:', JSON.stringify(initialConversationItem));
-            openAiWs.send(JSON.stringify(initialConversationItem));
-            openAiWs.send(JSON.stringify({ type: 'response.create' }));
-
-        const sendSessionUpdate = () => {
-            const sessionUpdate = {
-                type: 'session.update',
-                session: {
-                    turn_detection: { type: 'server_vad' },
-                    input_audio_format: 'g711_ulaw',
-                    output_audio_format: 'g711_ulaw',
-                    voice: VOICE,
-                    instructions: SYSTEM_MESSAGE,
-                    modalities: ["text", "audio"],
-                    temperature: 0.8,
-                }
-            };
-
-            console.log('Sending session update:', JSON.stringify(sessionUpdate));
-            openAiWs.send(JSON.stringify(sessionUpdate));
-        };
-
-        // Open event for OpenAI WebSocket
         openAiWs.on('open', () => {
             console.log('Connected to the OpenAI Realtime API');
-            setTimeout(sendSessionUpdate, 250); // Ensure connection stability, send after .25 seconds
+            sendSessionUpdate(openAiWs, systemMessage);
+            sendInitialConversationItem(openAiWs);
+        });
+
+        openAiWs.on('error', (error) => {
+            console.error('Error in the OpenAI WebSocket:', error);
         });
 
         // Listen for messages from the OpenAI WebSocket (and send to Twilio if necessary)
@@ -171,8 +144,6 @@ fastify.register(async (fastify) => {
                 const data = JSON.parse(message);
 
                 switch (data.event) {
-
-                    
                     case 'media':
                         if (openAiWs.readyState === WebSocket.OPEN) {
                             const audioAppend = {
@@ -202,20 +173,14 @@ fastify.register(async (fastify) => {
             console.log('Client disconnected.');
         });
 
-        // Handle WebSocket close and errors
+        // Handle WebSocket close
         openAiWs.on('close', () => {
             console.log('Disconnected from the OpenAI Realtime API');
-        });
-
-        openAiWs.on('error', (error) => {
-            console.error('Error in the OpenAI WebSocket:', error);
         });
     });
 });
 
-
 function generateTwimlResponse(hostname, callSid) {
-
     console.log('Generating TwiML response for callSid:', callSid);
     
     return `<?xml version="1.0" encoding="UTF-8"?>
@@ -242,13 +207,12 @@ async function fetchSystemMessage(callSid) {
             .single();
 
         if (error) throw error;
-        return data?.prompt_text;
+        return data?.prompt_text || FALLBACK_SYSTEM_MESSAGE;
     } catch (error) {
         console.error('Error fetching system message:', error);
-        return null;
+        return FALLBACK_SYSTEM_MESSAGE;
     }
 }
-
 
 function sendSessionUpdate(openAiWs, systemMessage) {
     const sessionUpdate = {
@@ -268,8 +232,25 @@ function sendSessionUpdate(openAiWs, systemMessage) {
     openAiWs.send(JSON.stringify(sessionUpdate));
 }
 
+function sendInitialConversationItem(openAiWs) {
+    const initialConversationItem = {
+        type: 'conversation.item.create',
+        item: {
+            type: 'message',
+            role: 'user',
+            content: [
+                {
+                    type: 'input_text',
+                    text: 'Greet the user with "Hello there! I am an AI voice assistant powered by Twilio and the OpenAI Realtime API. You can ask me for facts, jokes, or anything you can imagine. How can I help you?"'
+                }
+            ]
+        }
+    };
 
-
+    console.log('Sending initial conversation item:', JSON.stringify(initialConversationItem));
+    openAiWs.send(JSON.stringify(initialConversationItem));
+    openAiWs.send(JSON.stringify({ type: 'response.create' }));
+}
 
 // Start the server
 fastify.listen({ port: PORT, host: '0.0.0.0' }, (err) => {
