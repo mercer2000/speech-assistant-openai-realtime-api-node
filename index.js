@@ -50,13 +50,15 @@ fastify.get('/', async (request, reply) => {
 // Route for Twilio to handle incoming and outgoing calls
 // <Say> punctuation to improve text-to-speech translation
 fastify.all('/incoming-call', async (request, reply) => {
+    const callSid = request.body.CallSid || 'UnknownCallSid'; // Get CallSid from request body
+
     const twimlResponse = `<?xml version="1.0" encoding="UTF-8"?>
                           <Response>
                               <Say>Please wait while we connect your call to the A. I. voice assistant, powered by Twilio and the Open-A.I. Realtime API</Say>
                               <Pause length="1"/>
                               <Say>O.K. you can start talking!</Say>
                               <Connect>
-                                  <Stream url="wss://${request.headers.host}/media-stream" />
+                                  <Stream url="wss://${request.headers.host}/media-stream?CallSid=${callSid}" />
                               </Connect>
                           </Response>`;
 
@@ -67,6 +69,11 @@ fastify.all('/incoming-call', async (request, reply) => {
 fastify.register(async (fastify) => {
     fastify.get('/media-stream', { websocket: true }, (connection, req) => {
         console.log('Client connected');
+
+        const queryParams = new URLSearchParams(req.raw.url.split('?')[1]); // Get query params
+        const callSid = queryParams.get('CallSid') || 'UnknownCallSid';
+        console.log(`Incoming call from ${queryParams}`);
+
 
         const openAiWs = new WebSocket('wss://api.openai.com/v1/realtime?model=gpt-4o-realtime-preview-2024-10-01', {
             headers: {
