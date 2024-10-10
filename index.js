@@ -53,7 +53,7 @@ fastify.get('/', async (request, reply) => {
 
 // Route for Twilio to handle incoming calls
 fastify.all('/incoming-call', async (request, reply) => {
-    console.log('Received incoming call webhook');
+    console.log('Received incoming call webhook');  
     const { To: toNumber, From: fromNumber, CallSid: callSid } = request.body;
 
     console.log(`Incoming call to number: ${toNumber} from ${fromNumber}, CallSid: ${callSid}`);
@@ -75,6 +75,7 @@ fastify.all('/incoming-call', async (request, reply) => {
 fastify.register(async (fastify) => {
     fastify.get('/media-stream', { websocket: true }, (connection, req) => {
         console.log('Client connected');
+        console.log ('URL:', req.url);
 
          // Parse the callSid from the URL
          const url = new URL(req.url, `http://${req.headers.host}`);
@@ -94,6 +95,25 @@ fastify.register(async (fastify) => {
         });
 
         let streamSid = null;
+
+        const sendInitialConversationItem = () => {
+            const initialConversationItem = {
+                type: 'conversation.item.create',
+                item: {
+                    type: 'message',
+                    role: 'user',
+                    content: [
+                        {
+                            type: 'input_text',
+                            text: 'Greet the user with "Hello there! I am an AI voice assistant powered by Twilio and the OpenAI Realtime API. You can ask me for facts, jokes, or anything you can imagine. How can I help you?"'
+                        }
+                    ]
+                }
+            };
+
+            console.log('Sending initial conversation item:', JSON.stringify(initialConversationItem));
+            openAiWs.send(JSON.stringify(initialConversationItem));
+            openAiWs.send(JSON.stringify({ type: 'response.create' }));
 
         const sendSessionUpdate = () => {
             const sessionUpdate = {
@@ -195,6 +215,9 @@ fastify.register(async (fastify) => {
 
 
 function generateTwimlResponse(hostname, callSid) {
+
+    console.log('Generating TwiML response for callSid:', callSid);
+    
     return `<?xml version="1.0" encoding="UTF-8"?>
             <Response>
                 <Say>Hello.</Say>
