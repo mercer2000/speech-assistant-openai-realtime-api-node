@@ -93,9 +93,12 @@ async function handleWebSocketConnection(connection, req) {
         setupOpenAIWebSocket(connection, systemMessage);
     } catch (error) {
         console.error('Error setting up WebSocket connection:', error);
-        connection.socket.close();
+        if (connection.socket && connection.socket.close) {
+            connection.socket.close();
+        }
     }
 }
+
 
 async function fetchSystemMessage() {
     try {
@@ -130,12 +133,16 @@ function setupOpenAIWebSocket(connection, systemMessage) {
 
     openAiWs.on('message', (data) => handleOpenAIMessage(data, connection, streamSid));
 
-    connection.socket.on('message', (message) => handleTwilioMessage(message, openAiWs, streamSid));
+    if (connection.socket) {
+        connection.socket.on('message', (message) => handleTwilioMessage(message, openAiWs, streamSid));
 
-    connection.socket.on('close', () => {
-        if (openAiWs.readyState === WebSocket.OPEN) openAiWs.close();
-        console.log('Client disconnected.');
-    });
+        connection.socket.on('close', () => {
+            if (openAiWs.readyState === WebSocket.OPEN) openAiWs.close();
+            console.log('Client disconnected.');
+        });
+    } else {
+        console.error('Connection socket is undefined');
+    }
 
     openAiWs.on('close', () => console.log('Disconnected from the OpenAI Realtime API'));
     openAiWs.on('error', (error) => console.error('Error in the OpenAI WebSocket:', error));
