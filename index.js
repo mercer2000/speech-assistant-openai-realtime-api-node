@@ -138,7 +138,7 @@ fastify.register(async (fastify) => {
                     content: [
                         {
                             type: 'input_text',
-                            text: 'Greet the user with "Hello there! I am an AI voice assistant powered by Twilio and the OpenAI Realtime API. You can ask me for facts, jokes, or anything you can imagine. How can I help you?"'
+                            text: 'Greet the user with "Hello there! How can I help you?"'
                         }
                     ]
                 }
@@ -205,7 +205,16 @@ fastify.register(async (fastify) => {
         openAiWs.on('message', (data) => {
             try {
                 const response = JSON.parse(data);
+
                 console.log('Received event:', response.type);              
+
+
+                if (response.type === 'error')
+
+                    {
+                        console.error('Error:', response);
+                        return;
+                    }
 
                 if (response.type === 'session.updated') {
                     console.log('Session updated successfully:', response);
