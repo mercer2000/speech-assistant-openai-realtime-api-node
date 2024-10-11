@@ -50,7 +50,7 @@ fastify.get('/', async (request, reply) => {
 // Route for Twilio to handle incoming and outgoing calls
 // <Say> punctuation to improve text-to-speech translation
 fastify.all('/incoming-call', async (request, reply) => {
-    const callSid = request.body.CallSid || 'UnknownCallSid'; // Get CallSid from request body
+   
 
     const twimlResponse = `<?xml version="1.0" encoding="UTF-8"?>
                           <Response>
@@ -58,7 +58,7 @@ fastify.all('/incoming-call', async (request, reply) => {
                               <Pause length="1"/>
                               <Say>O.K. you can start talking!</Say>
                               <Connect>
-                                  <Stream url="wss://${request.headers.host}/media-stream?CallSid=${callSid}" />
+                                  <Stream url="wss://${request.headers.host}/media-stream" />
                               </Connect>
                           </Response>`;
 
@@ -67,11 +67,12 @@ fastify.all('/incoming-call', async (request, reply) => {
 
 // WebSocket route for media-stream
 fastify.register(async (fastify) => {
+
+
     fastify.get('/media-stream', { websocket: true }, (connection, req) => {
+
         console.log('Client connected');
-
         console.log(`Incoming call from ${req.raw.url}`);
-
 
         const openAiWs = new WebSocket('wss://api.openai.com/v1/realtime?model=gpt-4o-realtime-preview-2024-10-01', {
             headers: {
@@ -81,6 +82,8 @@ fastify.register(async (fastify) => {
         });
 
         let streamSid = null;
+        let callSid = null;
+        let sessionMessage = null;
 
         const initializeSession = () => {
             const sessionUpdate = {
@@ -226,11 +229,16 @@ fastify.register(async (fastify) => {
                             openAiWs.send(JSON.stringify(audioAppend));
                         }
                         break;
+
+                    case 'connected':
+                        callSid = data.start.callSid;
+                        console.log('Incoming stream has started', streamSid);
+
                     case 'start':
                         streamSid = data.start.streamSid;
-                        callSid = data.start.callSid;
+                        console.log('CallSid:', callSid);
 
-                        console.log('Incoming stream has started', streamSid);
+                        callSid = data.start.callSid;
                         console.log('CallSid:', callSid); 
                         break;
                     default:
@@ -258,6 +266,28 @@ fastify.register(async (fastify) => {
         });
     });
 });
+
+
+const lookupSessionMessage = async (callSid) => {
+    try {
+        // Implement your lookup logic here, e.g., database query
+        const sessionMessage = await yourLookupFunction(callSid);
+        
+        if (sessionMessage) {
+            const sessionUpdate = {
+                type: 'session.update',
+                session: {
+                    // ... other session details
+                    instructions: sessionMessage,
+                }
+            };
+            console.log('Sending custom session update:', JSON.stringify(sessionUpdate));
+            openAiWs.send(JSON.stringify(sessionUpdate));
+        }
+    } catch (error) {
+        console.error('Error looking up session message:', error);
+    }
+};
 
 fastify.listen({ port: PORT, host: '0.0.0.0' }, (err) => {
     if (err) {
