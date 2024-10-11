@@ -52,6 +52,14 @@ let lastAssistantItem;
 let userTranscription = '';
 let assistantTranscription = '';
 
+// Function to check for goodbye phrases
+const checkForGoodbye = (text) => {
+    const goodbyes = ['goodbye', 'bye', 'see you', 'farewell', 'talk to you later', 'take care', 'so long'];
+    const textLower = text.toLowerCase();
+    return goodbyes.some(phrase => textLower.includes(phrase));
+};
+
+
 
 // Root Route
 fastify.get('/', async (request, reply) => {
@@ -203,16 +211,33 @@ fastify.register(async (fastify) => {
                     console.log('Session updated successfully:', response);
                 }
 
-                 // Capture user transcription
-                 if (response.type === 'conversation.item.input_audio_transcription.completed') {
-                  
-                    console.log('User transcription:', response);
-                    // Append to user transcription
-                    userTranscription += transcription + '\n';
-                }
+                // Capture user transcription
+                if (response.type === 'conversation.item.input_audio_transcription.completed') {
+                    console.log('User transcription:', response.transcript);
+                    userTranscription += response.transcript;
 
+                    if (checkForGoodbye(response.transcript)) {
+                        console.log('User said goodbye. Ending call.');
+                        if (callSid) {
+                            twilioClient.calls(callSid)
+                                .update({status: 'completed'})
+                                .then(call => console.log('Call ended', call.sid))
+                                .catch(err => console.error('Error ending call:', err));
+                        }
+                    }
+
+                }
                 // Capture assistant's transcription in real-time
                 if (response.type === 'response.text.delta' && response.delta) {
+
+                    if (checkForGoodbye(assistantTranscription)) {
+                        console.log('Assistant said goodbye. Ending call.');
+                         // Close the connection
+                        if (connection) {
+                            connection.close();
+                        }
+                    }
+
                     console.log('Assistant transcription delta:', response.delta);
                     // Append delta to assistant transcription
                     assistantTranscription += response.delta;
@@ -231,6 +256,14 @@ fastify.register(async (fastify) => {
                 if (response.type === 'response.text.done') {
 
                     console.log ('Assistant transcription done:', response);
+
+                            // Close the connection
+                    if (connection) {
+                        connection.close();
+                    }
+                    // Reset assistantTranscription for next response
+                    assistantTranscription = '';
+                    
                     // You can process or store the assistantTranscription here
                     assistantTranscription += '\n';
                 }
