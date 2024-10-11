@@ -212,7 +212,7 @@ fastify.register(async (fastify) => {
 
                 // Capture assistant's transcription in real-time
                 if (response.type === 'response.text.delta' && response.delta) {
-                    console.log('Assistant transcription delta:', response.delta);
+                    //console.log('Assistant transcription delta:', response.delta);
                     // Append delta to assistant transcription
                     assistantTranscription += response.delta;
                 }
