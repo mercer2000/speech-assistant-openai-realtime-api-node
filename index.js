@@ -206,13 +206,13 @@ fastify.register(async (fastify) => {
             try {
                 const response = JSON.parse(data);
 
-                console.log('Received event:', response.type);              
+                console.log('Received event:', response);              
 
 
                 if (response.type === 'error')
 
                     {
-                        console.error('Error:', response);
+                        console.error('Error:', response.error);
                         return;
                     }
 
@@ -239,6 +239,10 @@ fastify.register(async (fastify) => {
                 // Capture assistant's transcription in real-time
                 if (response.type === 'response.text.delta' && response.delta) {
 
+                    console.log('Assistant transcription delta:', response.delta);
+                    // Append delta to assistant transcription
+                    assistantTranscription += response.delta;
+
                     if (checkForGoodbye(assistantTranscription)) {
                         console.log('Assistant said goodbye. Ending call.');
                          // Close the connection
@@ -247,9 +251,7 @@ fastify.register(async (fastify) => {
                         }
                     }
 
-                    console.log('Assistant transcription delta:', response.delta);
-                    // Append delta to assistant transcription
-                    assistantTranscription += response.delta;
+                    
                 }
 
                 if (response.type === 'response.audio.delta' && response.delta) {
