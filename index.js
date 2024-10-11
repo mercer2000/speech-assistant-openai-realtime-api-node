@@ -108,7 +108,7 @@ fastify.register(async (fastify) => {
                     modalities: ["text", "audio"],
                     temperature: 0.8,
                     input_audio_transcription: {
-                        "enabled": true,
+                      
                         "model": "whisper-1"
                     },
                 }
