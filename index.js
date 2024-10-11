@@ -205,15 +205,15 @@ fastify.register(async (fastify) => {
 
                  // Capture user transcription
                  if (response.type === 'conversation.item.input_audio_transcription.completed') {
-                    const transcription = response.item.content.find(c => c.type === 'text').text;
-                    console.log('User transcription:', transcription);
+                  
+                    console.log('User transcription:', response);
                     // Append to user transcription
                     userTranscription += transcription + '\n';
                 }
 
                 // Capture assistant's transcription in real-time
                 if (response.type === 'response.text.delta' && response.delta) {
-                    //console.log('Assistant transcription delta:', response.delta);
+                    console.log('Assistant transcription delta:', response.delta);
                     // Append delta to assistant transcription
                     assistantTranscription += response.delta;
                 }
@@ -229,7 +229,8 @@ fastify.register(async (fastify) => {
 
                 // When assistant's response is done
                 if (response.type === 'response.text.done') {
-                    console.log('Assistant transcription done:', assistantTranscription);
+
+                    console.log ('Assistant transcription done:', response);
                     // You can process or store the assistantTranscription here
                     assistantTranscription += '\n';
                 }
