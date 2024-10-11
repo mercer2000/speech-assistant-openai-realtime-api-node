@@ -227,32 +227,14 @@ fastify.register(async (fastify) => {
 
                     if (checkForGoodbye(response.transcript)) {
                         console.log('User said goodbye. Ending call.');
-                        if (callSid) {
-                            twilioClient.calls(callSid)
-                                .update({status: 'completed'})
-                                .then(call => console.log('Call ended', call.sid))
-                                .catch(err => console.error('Error ending call:', err));
-                        }
-                    }
-
-                }
-                // Capture assistant's transcription in real-time
-                if (response.type === 'response.text.delta' && response.delta) {
-
-                    console.log('Assistant transcription delta:', response.delta);
-                    // Append delta to assistant transcription
-                    assistantTranscription += response.delta;
-
-                    if (checkForGoodbye(assistantTranscription)) {
-                        console.log('Assistant said goodbye. Ending call.');
                          // Close the connection
-                        if (connection) {
+                         if (connection) {
                             connection.close();
                         }
                     }
 
-                    
                 }
+              
 
                 if (response.type === 'response.audio.delta' && response.delta) {
                     const audioDelta = {
@@ -264,16 +246,17 @@ fastify.register(async (fastify) => {
                 }
 
                 // When assistant's response is done
-                if (response.type === 'response.text.done') {
+                if (response.type === 'response.audio_transcript.done') {
 
-                    console.log ('Assistant transcription done:', response);
+                    console.log ('Assistant transcription done:', response.transcript);
 
-                            // Close the connection
-                    if (connection) {
-                        connection.close();
-                    }
-                    // Reset assistantTranscription for next response
-                    assistantTranscription = '';
+                    if (checkForGoodbye(response.transcript)) {
+                        console.log('User said goodbye. Ending call.');
+                         // Close the connection
+                         if (connection) {
+                            connection.close();
+                        }
+                    }                
                     
                     // You can process or store the assistantTranscription here
                     assistantTranscription += '\n';
