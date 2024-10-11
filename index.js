@@ -34,13 +34,24 @@ const LOG_EVENT_TYPES = [
     'input_audio_buffer.committed',
     'input_audio_buffer.speech_stopped',
     'input_audio_buffer.speech_started',
-    'session.created'
+    'session.created',
+    // Added events for transcription
+    'conversation.item.input_audio_transcription.completed',
+    'response.text.delta',
+    'response.text.done',
+    'response.audio_transcript.delta',
+    'response.audio_transcript.done'
 ];
 
 // Track drift between OpenAI and system clocks, and the assistant's last Item ID
 let localStartTime;
 let lastDrift = null;
 let lastAssistantItem;
+
+// Initialize transcription storage
+let userTranscription = '';
+let assistantTranscription = '';
+
 
 // Root Route
 fastify.get('/', async (request, reply) => {
@@ -147,6 +158,21 @@ fastify.register(async (fastify) => {
                     console.log('Session updated successfully:', response);
                 }
 
+                 // Capture user transcription
+                 if (response.type === 'conversation.item.input_audio_transcription.completed') {
+                    const transcription = response.item.content.find(c => c.type === 'text').text;
+                    console.log('User transcription:', transcription);
+                    // Append to user transcription
+                    userTranscription += transcription + '\n';
+                }
+
+                // Capture assistant's transcription in real-time
+                if (response.type === 'response.text.delta' && response.delta) {
+                    console.log('Assistant transcription delta:', response.delta);
+                    // Append delta to assistant transcription
+                    assistantTranscription += response.delta;
+                }
+
                 if (response.type === 'response.audio.delta' && response.delta) {
                     const audioDelta = {
                         event: 'media',
@@ -155,6 +181,31 @@ fastify.register(async (fastify) => {
                     };
                     connection.send(JSON.stringify(audioDelta));
                 }
+
+                  // When assistant's response is done
+                  if (response.type === 'response.text.done') {
+                    console.log('Assistant transcription done:', assistantTranscription);
+                    // You can process or store the assistantTranscription here
+                    assistantTranscription += '\n';
+                }
+
+                if (response.type === 'session.updated') {
+                    console.log('Session updated successfully:', response);
+                }
+
+                if (response.type === 'response.audio.delta' && response.delta) {
+                    const audioDelta = {
+                        event: 'media',
+                        streamSid: streamSid,
+                        media: { payload: Buffer.from(response.delta, 'base64').toString('base64') }
+                    };
+                    connection.send(JSON.stringify(audioDelta));
+                }
+
+                // We can get the following event while Twilio is still playing audio from the AI
+                if (response.type === 'input_audio_buffer.speech_started') {
+                    handleSpeechStartedEvent(response);
+                }            
 
                 // We can get the following event while Twilio is still playing audio from the AI
                 if (response.type === 'input_audio_buffer.speech_started') {
@@ -169,50 +220,9 @@ fastify.register(async (fastify) => {
             }
         });
 
-        // Interruption handling
-        const handleSpeechStartedEvent = (response) => {
-            const localTime = Date.now();
-            const drift = localTime - localStartTime - response.audio_start_ms;
+      
 
-            console.log('OpenAI Speech started at', response.audio_start_ms, 'ms from OpenAI perspective');
-            console.log('Local time at speech start:', localTime - localStartTime, 'ms');
-            console.log('Time drift (OpenAI - Local):', drift, 'ms');
 
-            if (lastDrift === null || drift !== lastDrift) {
-                console.log('Drift has changed. Previous:', lastDrift, 'Current:', drift);
-                lastDrift = drift;
-            }
-
-            if (streamSid) {
-                connection.send(JSON.stringify({
-                    event: 'clear',
-                    streamSid: streamSid
-                }));
-            }
-
-            if (lastAssistantItem) {
-                const truncateEvent = {
-                    type: 'conversation.item.truncate',
-                    item_id: lastAssistantItem,
-                    content_index: 0,
-                    audio_end_ms: response.audio_start_ms
-                };
-                console.log('Sending truncation event:', JSON.stringify(truncateEvent));
-                openAiWs.send(JSON.stringify(truncateEvent));
-                lastAssistantItem = null;
-            }
-        };
-
-        // Interruption handling requires knowing the preempted conversation's ID
-        const handleResponseDoneEvent = (response) => {
-            const outputItems = response.response.output;
-            for (const item of outputItems) {
-                if (item.role === 'assistant') {
-                    lastAssistantItem = item.id;
-                    break; // Consider the first relevant assistant item
-                }
-            }
-        };
 
         // Handle incoming messages from Twilio
         connection.on('message', (message) => {
@@ -231,11 +241,7 @@ fastify.register(async (fastify) => {
                         break;
 
                     case 'connected':
-                   
-                    callSid = data.start.callSid;
-                    console.log('CallSid:', callSid); 
-                       
-
+                  
                     case 'start':
                         streamSid = data.start.streamSid;
                         console.log('Incoming stream has started', streamSid);
@@ -252,11 +258,16 @@ fastify.register(async (fastify) => {
             }
         });
 
-        // Handle connection close
+       // Handle connection close
         connection.on('close', () => {
-            if (openAiWs.readyState === WebSocket.OPEN) openAiWs.close();
-            console.log('Client disconnected.');
+        if (openAiWs.readyState === WebSocket.OPEN) openAiWs.close();
+        console.log('Client disconnected.');
+
+        // Output the final transcriptions
+        console.log('Final User Transcription:\n', userTranscription);
+        console.log('Final Assistant Transcription:\n', assistantTranscription);
         });
+
 
         // Handle WebSocket close and errors
         openAiWs.on('close', () => {
