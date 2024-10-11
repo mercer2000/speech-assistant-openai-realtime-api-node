@@ -59,8 +59,11 @@ console.log(SYSTEM_MESSAGE);
 
 
 // Constants
-const VOICE = "alloy";
+const VOICE = "shimmer";
 const PORT = process.env.PORT || 5050; // Allow dynamic port assignment
+
+// alloy, echo, or shimmer
+
 
 // List of Event Types to log to the console. See the OpenAI Realtime API Documentation: https://platform.openai.com/docs/api-reference/realtime
 const LOG_EVENT_TYPES = [
