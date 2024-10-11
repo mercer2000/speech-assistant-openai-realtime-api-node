@@ -226,8 +226,8 @@ fastify.register(async (fastify) => {
                     connection.send(JSON.stringify(audioDelta));
                 }
 
-                  // When assistant's response is done
-                  if (response.type === 'response.text.done') {
+                // When assistant's response is done
+                if (response.type === 'response.text.done') {
                     console.log('Assistant transcription done:', assistantTranscription);
                     // You can process or store the assistantTranscription here
                     assistantTranscription += '\n';
@@ -235,16 +235,7 @@ fastify.register(async (fastify) => {
 
                 if (response.type === 'session.updated') {
                     console.log('Session updated successfully:', response);
-                }
-
-                if (response.type === 'response.audio.delta' && response.delta) {
-                    const audioDelta = {
-                        event: 'media',
-                        streamSid: streamSid,
-                        media: { payload: Buffer.from(response.delta, 'base64').toString('base64') }
-                    };
-                    connection.send(JSON.stringify(audioDelta));
-                }
+                }               
 
                 // We can get the following event while Twilio is still playing audio from the AI
                 if (response.type === 'input_audio_buffer.speech_started') {
