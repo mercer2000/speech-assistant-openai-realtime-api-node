@@ -25,8 +25,7 @@ const SYSTEM_MESSAGE = 'You are a helpful and bubbly AI assistant who loves to c
 const VOICE = 'alloy';
 const PORT = process.env.PORT || 5050; // Allow dynamic port assignment
 
-
-// List of Event Types to log to the console. See the OpenAI Realtime API Documentation: https://platform.openai.com/docs/api-reference/realtime
+// List of Event Types to log to the console
 const LOG_EVENT_TYPES = [
     'response.content.done',
     'rate_limits.updated',
@@ -52,24 +51,20 @@ let lastAssistantItem;
 let userTranscription = '';
 let assistantTranscription = '';
 
-
 // Root Route
 fastify.get('/', async (request, reply) => {
     reply.send({ message: 'Twilio Media Stream Server is running!' });
 });
 
 // Route for Twilio to handle incoming and outgoing calls
-// <Say> punctuation to improve text-to-speech translation
 fastify.all('/incoming-call', async (request, reply) => {
-   
-
     const twimlResponse = `<?xml version="1.0" encoding="UTF-8"?>
                           <Response>
                               <Say>Please wait while we connect your call to the A. I. voice assistant, powered by Twilio and the Open-A.I. Realtime API</Say>
                               <Pause length="1"/>
                               <Say>O.K. you can start talking!</Say>
                               <Connect>
-                                  <Stream url="wss://${request.headers.host}/media-stream" />
+                                  <Stream url="wss://${request.headers.host}/media-stream" track="inbound" />
                               </Connect>
                           </Response>`;
 
@@ -78,10 +73,7 @@ fastify.all('/incoming-call', async (request, reply) => {
 
 // WebSocket route for media-stream
 fastify.register(async (fastify) => {
-
-
     fastify.get('/media-stream', { websocket: true }, (connection, req) => {
-
         console.log('Client connected');
         console.log(`Incoming call from ${req.raw.url}`);
 
@@ -114,7 +106,7 @@ fastify.register(async (fastify) => {
             openAiWs.send(JSON.stringify(sessionUpdate));
 
             // Uncomment the following line to have AI speak first:
-            sendInitialConversationItem();
+             sendInitialConversationItem();
         };
 
         const sendInitialConversationItem = () => {
@@ -126,7 +118,7 @@ fastify.register(async (fastify) => {
                     content: [
                         {
                             type: 'input_text',
-                            text: 'Greet the user with "Hello there! I am an AI voice assistant powered by Twilio and the OpenAI Realtime API. You can ask me for facts, jokes, or anything you can imagine. How can I help you?"'
+                            text: 'Hello, how can I assist you today?'
                         }
                     ]
                 }
@@ -144,6 +136,49 @@ fastify.register(async (fastify) => {
             setTimeout(initializeSession, 100);
         });
 
+        // Define the missing functions
+        const handleSpeechStartedEvent = (response) => {
+            const localTime = Date.now();
+            const drift = localTime - localStartTime - response.audio_start_ms;
+
+            console.log('OpenAI Speech started at', response.audio_start_ms, 'ms from OpenAI perspective');
+            console.log('Local time at speech start:', localTime - localStartTime, 'ms');
+            console.log('Time drift (OpenAI - Local):', drift, 'ms');
+
+            if (lastDrift === null || drift !== lastDrift) {
+                console.log('Drift has changed. Previous:', lastDrift, 'Current:', drift);
+                lastDrift = drift;
+            }
+
+            if (streamSid) {
+                connection.send(JSON.stringify({
+                    event: 'clear',
+                    streamSid: streamSid
+                }));
+            }
+
+            if (lastAssistantItem) {
+                const truncateEvent = {
+                    type: 'conversation.item.truncate',
+                    item_id: lastAssistantItem,
+                    content_index: 0,
+                    audio_end_ms: response.audio_start_ms
+                };
+                console.log('Sending truncation event:', JSON.stringify(truncateEvent));
+                openAiWs.send(JSON.stringify(truncateEvent));
+                lastAssistantItem = null;
+            }
+        };
+
+        const handleResponseDoneEvent = (response) => {
+            const outputItems = response.response.output;
+            for (const item of outputItems) {
+                if (item.role === 'assistant') {
+                    lastAssistantItem = item.id;
+                    break; // Consider the first relevant assistant item
+                }
+            }
+        };
 
         // Listen for messages from the OpenAI WebSocket (and send to Twilio if necessary)
         openAiWs.on('message', (data) => {
@@ -158,8 +193,8 @@ fastify.register(async (fastify) => {
                     console.log('Session updated successfully:', response);
                 }
 
-                 // Capture user transcription
-                 if (response.type === 'conversation.item.input_audio_transcription.completed') {
+                // Capture user transcription
+                if (response.type === 'conversation.item.input_audio_transcription.completed') {
                     const transcription = response.item.content.find(c => c.type === 'text').text;
                     console.log('User transcription:', transcription);
                     // Append to user transcription
@@ -173,26 +208,14 @@ fastify.register(async (fastify) => {
                     assistantTranscription += response.delta;
                 }
 
-                if (response.type === 'response.audio.delta' && response.delta) {
-                    const audioDelta = {
-                        event: 'media',
-                        streamSid: streamSid,
-                        media: { payload: Buffer.from(response.delta, 'base64').toString('base64') }
-                    };
-                    connection.send(JSON.stringify(audioDelta));
-                }
-
-                  // When assistant's response is done
-                  if (response.type === 'response.text.done') {
+                // When assistant's response is done
+                if (response.type === 'response.text.done') {
                     console.log('Assistant transcription done:', assistantTranscription);
                     // You can process or store the assistantTranscription here
                     assistantTranscription += '\n';
                 }
 
-                if (response.type === 'session.updated') {
-                    console.log('Session updated successfully:', response);
-                }
-
+                // Send assistant's audio to Twilio
                 if (response.type === 'response.audio.delta' && response.delta) {
                     const audioDelta = {
                         event: 'media',
@@ -202,16 +225,12 @@ fastify.register(async (fastify) => {
                     connection.send(JSON.stringify(audioDelta));
                 }
 
-                // We can get the following event while Twilio is still playing audio from the AI
-                if (response.type === 'input_audio_buffer.speech_started') {
-                    handleSpeechStartedEvent(response);
-                }            
-
-                // We can get the following event while Twilio is still playing audio from the AI
+                // Handle speech started event
                 if (response.type === 'input_audio_buffer.speech_started') {
                     handleSpeechStartedEvent(response);
                 }
 
+                // Handle response done event
                 if (response.type === 'response.done') {
                     handleResponseDoneEvent(response);
                 }
@@ -219,10 +238,6 @@ fastify.register(async (fastify) => {
                 console.error('Error processing OpenAI message:', error, 'Raw message:', data);
             }
         });
-
-      
-
-
 
         // Handle incoming messages from Twilio
         connection.on('message', (message) => {
@@ -241,13 +256,14 @@ fastify.register(async (fastify) => {
                         break;
 
                     case 'connected':
-                  
+                        break;
+
                     case 'start':
                         streamSid = data.start.streamSid;
                         console.log('Incoming stream has started', streamSid);
 
                         callSid = data.start.callSid;
-                        console.log('CallSid:', callSid); 
+                        console.log('CallSid:', callSid);
                         break;
                     default:
                         console.log('Received non-media event:', data.event);
@@ -258,16 +274,15 @@ fastify.register(async (fastify) => {
             }
         });
 
-       // Handle connection close
+        // Handle connection close
         connection.on('close', () => {
-        if (openAiWs.readyState === WebSocket.OPEN) openAiWs.close();
-        console.log('Client disconnected.');
+            if (openAiWs.readyState === WebSocket.OPEN) openAiWs.close();
+            console.log('Client disconnected.');
 
-        // Output the final transcriptions
-        console.log('Final User Transcription:\n', userTranscription);
-        console.log('Final Assistant Transcription:\n', assistantTranscription);
+            // Output the final transcriptions
+            console.log('Final User Transcription:\n', userTranscription);
+            console.log('Final Assistant Transcription:\n', assistantTranscription);
         });
-
 
         // Handle WebSocket close and errors
         openAiWs.on('close', () => {
@@ -280,12 +295,11 @@ fastify.register(async (fastify) => {
     });
 });
 
-
 const lookupSessionMessage = async (callSid) => {
     try {
         // Implement your lookup logic here, e.g., database query
         const sessionMessage = await yourLookupFunction(callSid);
-        
+
         if (sessionMessage) {
             const sessionUpdate = {
                 type: 'session.update',
