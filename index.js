@@ -70,8 +70,6 @@ fastify.register(async (fastify) => {
     fastify.get('/media-stream', { websocket: true }, (connection, req) => {
         console.log('Client connected');
 
-        const queryParams = new URLSearchParams(req.raw.url.split('?')[1]); // Get query params
-        const callSid = queryParams.get('CallSid') || 'UnknownCallSid';
         console.log(`Incoming call from ${req.raw.url}`);
 
 
@@ -230,7 +228,10 @@ fastify.register(async (fastify) => {
                         break;
                     case 'start':
                         streamSid = data.start.streamSid;
+                        callSid = data.start.callSid;
+
                         console.log('Incoming stream has started', streamSid);
+                        console.log('CallSid:', callSid); 
                         break;
                     default:
                         console.log('Received non-media event:', data.event);
