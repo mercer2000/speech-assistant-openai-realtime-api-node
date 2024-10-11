@@ -231,12 +231,14 @@ fastify.register(async (fastify) => {
                         break;
 
                     case 'connected':
-                        callSid = data.start.callSid;
-                        console.log('Incoming stream has started', streamSid);
+                   
+                    callSid = data.start.callSid;
+                    console.log('CallSid:', callSid); 
+                       
 
                     case 'start':
                         streamSid = data.start.streamSid;
-                        console.log('CallSid:', callSid);
+                        console.log('Incoming stream has started', streamSid);
 
                         callSid = data.start.callSid;
                         console.log('CallSid:', callSid); 
