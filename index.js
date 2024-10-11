@@ -107,6 +107,10 @@ fastify.register(async (fastify) => {
                     instructions: SYSTEM_MESSAGE,
                     modalities: ["text", "audio"],
                     temperature: 0.8,
+                    input_audio_transcription: {
+                        "enabled": true,
+                        "model": "whisper-1"
+                    },
                 }
             };
 
@@ -193,10 +197,7 @@ fastify.register(async (fastify) => {
         openAiWs.on('message', (data) => {
             try {
                 const response = JSON.parse(data);
-
-                if (LOG_EVENT_TYPES.includes(response.type)) {
-                    console.log(`Received event: ${response.type}`, response);
-                }
+                console.log('Received event:', response.type);              
 
                 if (response.type === 'session.updated') {
                     console.log('Session updated successfully:', response);
