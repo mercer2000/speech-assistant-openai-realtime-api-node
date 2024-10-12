@@ -3,11 +3,13 @@ import WebSocket from "ws";
 import dotenv from "dotenv";
 import fastifyFormBody from "@fastify/formbody";
 import fastifyWs from "@fastify/websocket";
-// 1. Missing import for Supabase client
 import { createClient } from '@supabase/supabase-js';
 
 // Load environment variables from .env file
 dotenv.config();
+
+// Add this near the top of your file, with other imports
+const CALL_DURATION_LIMIT = 5 * 60 * 1000; // 5 minutes in milliseconds
 
 // Retrieve the OpenAI API key and Supabase credentials from environment variables
 const { OPENAI_API_KEY, SUPABASE_URL, SUPABASE_ANON_KEY } = process.env;
@@ -19,7 +21,6 @@ if (!OPENAI_API_KEY || !SUPABASE_URL || !SUPABASE_ANON_KEY) {
 
 // Initialize Supabase client
 const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
-
 
 // Initialize Fastify
 const fastify = Fastify();
@@ -59,19 +60,11 @@ You are a voice assistant for Breeze Electric in Dallas, TX. Handle after-hours 
 - For this demo, allow scheduling from any location.
 `;
 
-// Example usage (for demonstration purposes)
-console.log(SYSTEM_MESSAGE);
-
-
-
 // Constants
 const VOICE = "shimmer";
 const PORT = process.env.PORT || 5050; // Allow dynamic port assignment
 
-// alloy, echo, or shimmer
-
-
-// List of Event Types to log to the console. See the OpenAI Realtime API Documentation: https://platform.openai.com/docs/api-reference/realtime
+// List of Event Types to log to the console
 const LOG_EVENT_TYPES = [
   "response.content.done",
   "rate_limits.updated",
@@ -80,7 +73,6 @@ const LOG_EVENT_TYPES = [
   "input_audio_buffer.speech_stopped",
   "input_audio_buffer.speech_started",
   "session.created",
-  // Added events for transcription
   "conversation.item.input_audio_transcription.completed",
   "response.text.delta",
   "response.text.done",
@@ -95,9 +87,13 @@ let localStartTime;
 let lastDrift = null;
 let lastAssistantItem;
 
+let silentRequests = new Map();
+let requestCounter = 0;
+
 // Initialize transcription storage
 let userTranscription = "";
 let assistantTranscription = "";
+let finalSummary = "";
 
 // Function to check for goodbye phrases
 const checkForGoodbye = (text) => {
@@ -114,40 +110,64 @@ const checkForGoodbye = (text) => {
   return goodbyes.some((phrase) => textLower.includes(phrase));
 };
 
+// Function to process the end of call
+async function processEndOfCall(transcription) {
+  try {
+    const summaryPrompt = `
+      Provide a brief summary of the following conversation:
+      ${transcription}
+    `;
+    const summary = await makeSilentRequest(summaryPrompt);
+
+    const actionItemsPrompt = `
+      List key action items from the following conversation:
+      ${transcription}
+    `;
+    const actionItems = await makeSilentRequest(actionItemsPrompt);
+
+    console.log("Call Summary:", summary);
+    console.log("Action Items:", actionItems);
+
+    // After all processing is done, you can close the connection
+    openAiWs.close();
+  } catch (error) {
+    console.error("Error in end-of-call processing:", error);
+    openAiWs.close();
+  }
+}
 
 // Function to lookup tenant_id and prompt
 async function lookupPrompt(phoneNumber) {
-    try {
-      // First, lookup the tenant_id from the Organizations table
-      const { data: orgData, error: orgError } = await supabase
-        .from('Organizations')
-        .select('tenant_id')
-        .eq('phone_number', phoneNumber)
-        .limit(1)
-        .single();  
-      if (orgError) throw orgError;
-      if (!orgData) throw new Error('Organization not found');
-  
-      const tenant_id = orgData.tenant_id;
-  
-      // Next, lookup the prompt from the prompts table
-      const { data: promptData, error: promptError } = await supabase
-        .from('prompts')
-        .select('content')
-        .eq('tenant_id', tenant_id)
-        .limit(1)
-        .single();
-  
-      if (promptError) throw promptError;
-      if (!promptData) throw new Error('Prompt not found');
-  
-      return promptData.content;
-    } catch (error) {
-      console.error('Error looking up prompt:', error);
-      return null;
-    }
+  try {
+    // First, lookup the tenant_id from the Organizations table
+    const { data: orgData, error: orgError } = await supabase
+      .from('Organizations')
+      .select('tenant_id')
+      .eq('phone_number', phoneNumber)
+      .limit(1)
+      .single();  
+    if (orgError) throw orgError;
+    if (!orgData) throw new Error('Organization not found');
+
+    const tenant_id = orgData.tenant_id;
+
+    // Next, lookup the prompt from the prompts table
+    const { data: promptData, error: promptError } = await supabase
+      .from('prompts')
+      .select('content')
+      .eq('tenant_id', tenant_id)
+      .limit(1)
+      .single();
+
+    if (promptError) throw promptError;
+    if (!promptData) throw new Error('Prompt not found');
+
+    return promptData.content;
+  } catch (error) {
+    console.error('Error looking up prompt:', error);
+    return null;
   }
-  
+}
 
 // Root Route
 fastify.get("/", async (request, reply) => {
@@ -155,7 +175,6 @@ fastify.get("/", async (request, reply) => {
 });
 
 // Route for Twilio to handle incoming and outgoing calls
-// <Say> punctuation to improve text-to-speech translation
 fastify.all("/incoming-call", async (request, reply) => {
   const twimlResponse = `<?xml version="1.0" encoding="UTF-8"?>
     <Response>                            
@@ -166,52 +185,52 @@ fastify.all("/incoming-call", async (request, reply) => {
   reply.type("text/xml").send(twimlResponse);
 });
 
-// Modify the WebSocket route to include dynamic prompt lookup
+// WebSocket route for media streaming
 fastify.register(async (fastify) => {
-    fastify.get("/media-stream", { websocket: true }, async (connection, req) => {
-      console.log("Client connected");
-      console.log(`Incoming call from ${req.raw.url}`);
-  
-      const openAiWs = new WebSocket(
-        "wss://api.openai.com/v1/realtime?model=gpt-4o-realtime-preview-2024-10-01",
-        {
-          headers: {
-            Authorization: `Bearer ${OPENAI_API_KEY}`,
-            "OpenAI-Beta": "realtime=v1",
+  fastify.get("/media-stream", { websocket: true }, async (connection, req) => {
+    console.log("Client connected");
+    console.log(`Incoming call from ${req.raw.url}`);
+
+    const openAiWs = new WebSocket(
+      "wss://api.openai.com/v1/realtime?model=gpt-4o-realtime-preview-2024-10-01",
+      {
+        headers: {
+          Authorization: `Bearer ${OPENAI_API_KEY}`,
+          "OpenAI-Beta": "realtime=v1",
+        },
+      }
+    );
+
+    let streamSid = null;
+    let callSid = null;
+    let dynamicPrompt = null;
+
+    const initializeSession = async () => {
+      if (callSid) {
+        dynamicPrompt = await lookupPrompt(callSid);
+      }
+
+      const sessionUpdate = {
+        type: "session.update",
+        session: {
+          turn_detection: { type: "server_vad" },
+          input_audio_format: "g711_ulaw",
+          output_audio_format: "g711_ulaw",
+          voice: VOICE,
+          instructions: dynamicPrompt || SYSTEM_MESSAGE,
+          modalities: ["text", "audio"],
+          temperature: 0.8,
+          input_audio_transcription: {
+            model: "whisper-1",
           },
-        }
-      );
-  
-      let streamSid = null;
-      let callSid = null;
-      let dynamicPrompt = null;
-  
-      const initializeSession = async () => {
-        if (callSid) {
-          dynamicPrompt = await lookupPrompt(callSid);
-        }
-  
-        const sessionUpdate = {
-          type: "session.update",
-          session: {
-            turn_detection: { type: "server_vad" },
-            input_audio_format: "g711_ulaw",
-            output_audio_format: "g711_ulaw",
-            voice: VOICE,
-            instructions: dynamicPrompt || SYSTEM_MESSAGE, // Use dynamic prompt if available, otherwise fallback to default
-            modalities: ["text", "audio"],
-            temperature: 0.8,
-            input_audio_transcription: {
-              model: "whisper-1",
-            },
-          },
-        };
-  
-        console.log("Sending session update:", JSON.stringify(sessionUpdate));
-        openAiWs.send(JSON.stringify(sessionUpdate));
-  
-        sendInitialConversationItem();
+        },
       };
+
+      console.log("Sending session update:", JSON.stringify(sessionUpdate));
+      openAiWs.send(JSON.stringify(sessionUpdate));
+
+      sendInitialConversationItem();
+    };
 
     const sendInitialConversationItem = () => {
       const initialConversationItem = {
@@ -243,7 +262,6 @@ fastify.register(async (fastify) => {
       setTimeout(initializeSession, 100);
     });
 
-    // Define the missing functions
     const handleSpeechStartedEvent = (response) => {
       const localTime = Date.now();
       const drift = localTime - localStartTime - response.audio_start_ms;
@@ -302,7 +320,43 @@ fastify.register(async (fastify) => {
       }
     };
 
-    // Listen for messages from the OpenAI WebSocket (and send to Twilio if necessary)
+    // Function to make a silent request
+    function makeSilentRequest(prompt) {
+      const requestId = requestCounter++;
+      silentRequests.set(requestId, { response: "", resolve: null, reject: null });
+
+      const silentConversationItem = {
+        type: "conversation.item.create",
+        item: {
+          type: "message",
+          role: "user",
+          content: [
+            {
+              type: "input_text",
+              text: prompt,
+            },
+          ],
+        },
+      };
+
+      openAiWs.send(JSON.stringify(silentConversationItem));
+
+      const silentResponseRequest = {
+        type: "response.create",
+        response: {
+          modalities: ["text"],
+        },
+        request_id: requestId.toString(),
+      };
+      openAiWs.send(JSON.stringify(silentResponseRequest));
+
+      return new Promise((resolve, reject) => {
+        silentRequests.get(requestId).resolve = resolve;
+        silentRequests.get(requestId).reject = reject;
+      });
+    }
+
+    // Listen for messages from the OpenAI WebSocket
     openAiWs.on("message", (data) => {
       try {
         const response = JSON.parse(data);
@@ -319,19 +373,31 @@ fastify.register(async (fastify) => {
         }
 
         // Capture user transcription
-        if (
-          response.type ===
-          "conversation.item.input_audio_transcription.completed"
-        ) {
+        if (response.type === "conversation.item.input_audio_transcription.completed") {
           console.log("User transcription:", response.transcript);
           userTranscription += response.transcript;
 
           if (checkForGoodbye(response.transcript)) {
             console.log("User said goodbye. Ending call.");
-            // Close the connection
             if (connection) {
               connection.close();
             }
+          }
+        }
+
+        if (response.type === "response.text.delta" && response.request_id) {
+          const requestId = parseInt(response.request_id);
+          if (silentRequests.has(requestId)) {
+            silentRequests.get(requestId).response += response.delta;
+          }
+        }
+
+        if (response.type === "response.text.done" && response.request_id) {
+          const requestId = parseInt(response.request_id);
+          if (silentRequests.has(requestId)) {
+            const request = silentRequests.get(requestId);
+            request.resolve(request.response);
+            silentRequests.delete(requestId);
           }
         }
 
@@ -348,33 +414,27 @@ fastify.register(async (fastify) => {
 
         // When assistant's response is done
         if (response.type === "response.audio_transcript.done") {
-            console.log("Assistant transcription done:", response.transcript);
-            assistantTranscription += response.transcript + "\n";
-      
-            if (checkForGoodbye(response.transcript)) {
-              console.log("Goodbye detected in assistant's response. Preparing to end call.");
-              goodbyeDetected = true;
+          console.log("Assistant transcription done:", response.transcript);
+          assistantTranscription += response.transcript + "\n";
+
+          if (checkForGoodbye(response.transcript)) {
+            console.log("Goodbye detected in assistant's response. Preparing to end call.");
+            goodbyeDetected = true;
+          }
+
+          if (goodbyeDetected) {
+            console.log("Goodbye confirmed. Ending call after this audio segment.");
+            if (connection) {
+              connection.close();
             }
-      
-            if (goodbyeDetected) {
-              console.log("Goodbye confirmed. Ending call after this audio segment.");
-              if (connection) {
-                connection.close();
-              }
-              goodbyeDetected = false; // Reset the flag
-            }
+            goodbyeDetected = false; // Reset the flag
+          }
         }
 
-        if (response.type === "session.updated") {
-          console.log("Session updated successfully:", response);
-        }
-
-        // We can get the following event while Twilio is still playing audio from the AI
         if (response.type === "input_audio_buffer.speech_started") {
           handleSpeechStartedEvent(response);
         }
 
-      
         if (response.type === "response.done") {
           handleResponseDoneEvent(response);
         }
@@ -388,105 +448,110 @@ fastify.register(async (fastify) => {
       }
     });
 
-    // Handle incoming messages from Twilio
+        // Handle incoming messages from Twilio
     connection.on("message", async (message) => {
-      try {
-        const data = JSON.parse(message);
+        try {
+          const data = JSON.parse(message);
+  
+          switch (data.event) {
+            case "media":
+              if (openAiWs.readyState === WebSocket.OPEN) {
+                const audioAppend = {
+                  type: "input_audio_buffer.append",
+                  audio: data.media.payload,
+                };
+                openAiWs.send(JSON.stringify(audioAppend));
+              }
+              break;
+  
+            case "connected":
+              // Handle connected event if needed
+              break;
+  
+            case "mark":
+              // This event is sent by Twilio when speech ends
+              if (goodbyeDetected) {
+                console.log("Call ended. Processing final summary.");
+                await processEndOfCall(userTranscription + "\n" + assistantTranscription);
+                // Don't close the connection immediately
+                // connection.close() will be called after processing the silent request
+              }
+              break;
+  
+            case "start":
+              streamSid = data.start.streamSid;
+              callSid = data.start.callSid;
+              console.log("Incoming stream has started", streamSid);
+              console.log("CallSid:", callSid);
 
-        switch (data.event) {
-          case "media":
-            if (openAiWs.readyState === WebSocket.OPEN) {
-              const audioAppend = {
-                type: "input_audio_buffer.append",
-                audio: data.media.payload,
-              };
-              openAiWs.send(JSON.stringify(audioAppend));
-            }
-            break;
+               // Set the call start time and initialize the duration timer
+                callStartTime = Date.now();
+                callDurationTimer = setTimeout(() => {
+                    console.log("Call duration limit reached. Ending call.");
+                    endCall(connection, openAiWs);
+                }, CALL_DURATION_LIMIT);
 
-          case "connected":
 
-          case "mark":
-        
-          // This event is sent by Twilio when speech ends
-          if (goodbyeDetected) {
-          console.log("User finished speaking after goodbye detected. Ending call.");
-          connection.close();
+              await initializeSession(); // Call initializeSession after capturing callSid
+              break;
+  
+            default:
+              console.log("Received non-media event:", data.event);
+              break;
           }
-          break;
-            
-          case "start":
-            streamSid = data.start.streamSid;
-            callSid = data.start.callSid;
-            console.log("Incoming stream has started", streamSid);
-            console.log("CallSid:", callSid);
-            await initializeSession(); // Call initializeSession after capturing callSid
-            break;
-
-            streamSid = data.start.streamSid;
-            console.log("Incoming stream has started", streamSid);
-
-            callSid = data.start.callSid;
-            console.log("CallSid:", callSid);
-            break;
-          default:
-            console.log("Received non-media event:", data.event);
-            break;
+        } catch (error) {
+          console.error("Error parsing message:", error, "Message:", message);
         }
-      } catch (error) {
-        console.error("Error parsing message:", error, "Message:", message);
-      }
-    });
+      });
+  
+      // Handle connection close
+      connection.on("close", () => {
+        clearTimeout(callDurationTimer);
+        if (openAiWs.readyState === WebSocket.OPEN) openAiWs.close();
 
-    // Handle connection close
-    connection.on("close", () => {
-      if (openAiWs.readyState === WebSocket.OPEN) openAiWs.close();
-      console.log("Client disconnected.");
+        console.log("Client disconnected.");
 
-      // Output the final transcriptions
-      console.log("Final User Transcription:\n", userTranscription);
-      console.log("Final Assistant Transcription:\n", assistantTranscription);
-    });
-
-    // Handle WebSocket close and errors
-    openAiWs.on("close", () => {
-      console.log("Disconnected from the OpenAI Realtime API");
-    });
-
-    openAiWs.on("error", (error) => {
-      console.error("Error in the OpenAI WebSocket:", error);
+        const callDuration = Date.now() - callStartTime;
+        console.log(`Call duration: ${callDuration / 1000} seconds`);
+        
+  
+        // Output the final transcriptions
+        console.log("Final User Transcription:\n", userTranscription);
+        console.log("Final Assistant Transcription:\n", assistantTranscription);
+      });
+  
+      // Handle WebSocket close and errors
+      openAiWs.on("close", () => {
+        console.log("Disconnected from the OpenAI Realtime API");
+      });
+  
+      openAiWs.on("error", (error) => {
+        console.error("Error in the OpenAI WebSocket:", error);
+      });
     });
   });
-});
 
-const lookupSessionMessage = async (callSid) => {
-  try {
-    // Implement your lookup logic here, e.g., database query
-    const sessionMessage = await yourLookupFunction(callSid);
-
-    if (sessionMessage) {
-      const sessionUpdate = {
-        type: "session.update",
-        session: {
-          // ... other session details
-          instructions: sessionMessage,
-        },
-      };
-      console.log(
-        "Sending custom session update:",
-        JSON.stringify(sessionUpdate)
-      );
-      openAiWs.send(JSON.stringify(sessionUpdate));
+  // Add this function after the WebSocket route handler
+function endCall(connection, openAiWs) {
+    clearTimeout(callDurationTimer);
+    
+    if (connection && connection.socket.readyState === WebSocket.OPEN) {
+      connection.socket.close();
     }
-  } catch (error) {
-    console.error("Error looking up session message:", error);
+    
+    if (openAiWs && openAiWs.readyState === WebSocket.OPEN) {
+      openAiWs.close();
+    }
+    
+    processEndOfCall(userTranscription + "\n" + assistantTranscription);
   }
-};
-
-fastify.listen({ port: PORT, host: "0.0.0.0" }, (err) => {
-  if (err) {
-    console.error(err);
-    process.exit(1);
-  }
-  console.log(`Server is listening on port ${PORT}`);
-});
+  
+  
+  // Start the server
+  fastify.listen({ port: PORT, host: "0.0.0.0" }, (err) => {
+    if (err) {
+      console.error(err);
+      process.exit(1);
+    }
+    console.log(`Server is listening on port ${PORT}`);
+  });
