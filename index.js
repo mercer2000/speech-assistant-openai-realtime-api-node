@@ -261,6 +261,10 @@ fastify.register(async (fastify) => {
     let dynamicPrompt = null;
 
     const initializeSession = async () => {
+
+console.log("Initializing session");
+
+
       if (callSid) {
         dynamicPrompt = await lookupPrompt(callSid);
         console.log ("Dynamic prompt:", dynamicPrompt); 
@@ -326,17 +330,7 @@ fastify.register(async (fastify) => {
         localTime - localStartTime,
         "ms"
       );
-      console.log("Time drift (OpenAI - Local):", drift, "ms");
-
-      if (lastDrift === null || drift !== lastDrift) {
-        console.log(
-          "Drift has changed. Previous:",
-          lastDrift,
-          "Current:",
-          drift
-        );
-        lastDrift = drift;
-      }
+     
 
       if (streamSid) {
         connection.send(
