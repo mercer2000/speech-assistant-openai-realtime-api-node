@@ -12,15 +12,15 @@ dotenv.config();
 const CALL_DURATION_LIMIT = 5 * 60 * 1000; // 5 minutes in milliseconds
 
 // Retrieve the OpenAI API key and Supabase credentials from environment variables
-const { OPENAI_API_KEY, SUPABASE_URL, SUPABASE_ANON_KEY } = process.env;
+const { OPENAI_API_KEY, SUPABASE_URL, SUPABASE_KEY } = process.env;
 
-if (!OPENAI_API_KEY || !SUPABASE_URL || !SUPABASE_ANON_KEY) {
+if (!OPENAI_API_KEY || !SUPABASE_URL || !SUPABASE_KEY) {
   console.error("Missing required environment variables. Please check your .env file.");
   process.exit(1);
 }
 
 // Initialize Supabase client
-const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
 
 // Initialize Fastify
 const fastify = Fastify();
@@ -513,7 +513,7 @@ fastify.register(async (fastify) => {
 
         const callDuration = Date.now() - callStartTime;
         console.log(`Call duration: ${callDuration / 1000} seconds`);
-        
+
   
         // Output the final transcriptions
         console.log("Final User Transcription:\n", userTranscription);
