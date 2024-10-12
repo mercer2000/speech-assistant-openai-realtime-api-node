@@ -361,10 +361,16 @@ fastify.register(async (fastify) => {
     // Modify the handleResponseDoneEvent function
     const handleResponseDoneEvent = (response) => {
 
-        console.log("Response done event received:", response);
-        
+      
+
       const outputItems = response.response.output;
+
+      console.log("Response done event received:", outputItems);
+
       for (const item of outputItems) {
+
+        console.log ("Item role:", item);
+
         if (item.role === "assistant") {
           lastAssistantItem = item.id;
 
@@ -389,7 +395,7 @@ fastify.register(async (fastify) => {
         const response = JSON.parse(data);
 
         if (response.type === "error") {
-          console.error("Error:", response.error);
+          // console.error("Error:", response.error);
           return;
         }
 
