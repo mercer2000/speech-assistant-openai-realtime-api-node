@@ -14,15 +14,15 @@ const VOICE = "shimmer";
 const PORT = process.env.PORT || 5050;
 
 // Retrieve the OpenAI API key and Supabase credentials from environment variables
-const { OPENAI_API_KEY, SUPABASE_URL, SUPABASE_ANON_KEY } = process.env;
+const { OPENAI_API_KEY, SUPABASE_URL, SUPABASE_KEY } = process.env;
 
-if (!OPENAI_API_KEY || !SUPABASE_URL || !SUPABASE_ANON_KEY) {
+if (!OPENAI_API_KEY || !SUPABASE_URL || !SUPABASE_KEY) {
   console.error("Missing required environment variables. Please check your .env file.");
   process.exit(1);
 }
 
 // Initialize Supabase client
-const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
 
 // Initialize Fastify
 const fastify = Fastify();
