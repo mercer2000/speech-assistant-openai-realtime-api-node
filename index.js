@@ -185,9 +185,9 @@ fastify.all("/incoming-call", async (request, reply) => {
 
 // Modify the WebSocket route to include dynamic prompt lookup
 fastify.register(async (fastify) => {
-    fastify.get("/media-stream", { websocket: true }, async (connection, req) => {
+    fastify.get("/media-stream", { websocket: true }, (connection, req) => {
       console.log("Client connected");
-      console.log(`Incoming call from ${req.raw.url}`);
+      console.log(`Incoming call from ${req.url}`);
   
       const openAiWs = new WebSocket(
         "wss://api.openai.com/v1/realtime?model=gpt-4o-realtime-preview-2024-10-01",
@@ -201,7 +201,6 @@ fastify.register(async (fastify) => {
   
       let streamSid = null;
       let callSid = null;
-  
       let dynamicPrompt = null;
   
       const initializeSession = async () => {
@@ -224,8 +223,7 @@ fastify.register(async (fastify) => {
             },
           },
         };
-  
-        console.log("Sending session update:", JSON.stringify(sessionUpdate));
+        
         openAiWs.send(JSON.stringify(sessionUpdate));
 
           // Wait for a short time to ensure the initial session update is processed
@@ -239,7 +237,6 @@ fastify.register(async (fastify) => {
             },
         };
 
-        console.log("Sending prompt session update:", JSON.stringify(promptSessionUpdate));
         openAiWs.send(JSON.stringify(promptSessionUpdate));
 
         // Wait for a short time to ensure the prompt session update is processed
@@ -369,16 +366,17 @@ fastify.register(async (fastify) => {
         }
 
         if (response.type === "response.audio.delta" && response.delta) {
-          const audioDelta = {
-            event: "media",
-            streamSid: streamSid,
-            media: {
-              payload: Buffer.from(response.delta, "base64").toString("base64"),
-            },
-          };
-          connection.send(JSON.stringify(audioDelta));
-        }
-
+            const audioDelta = {
+              event: "media",
+              streamSid: streamSid,
+              media: {
+                payload: Buffer.from(response.delta, "base64").toString("base64"),
+              },
+            };
+            if (connection.socket && connection.socket.readyState === WebSocket.OPEN) {
+              connection.socket.send(JSON.stringify(audioDelta));
+            }
+          }
         // When assistant's response is done
         if (response.type === "response.audio_transcript.done") {
             console.log("Assistant transcription done:", response.transcript);
@@ -411,7 +409,7 @@ fastify.register(async (fastify) => {
         if (response.type === "response.done") {
           handleResponseDoneEvent(response);
         }
-      } catch (error) {
+    } catch (error) {
         console.error(
           "Error processing OpenAI message:",
           error,
@@ -427,15 +425,15 @@ fastify.register(async (fastify) => {
         const data = JSON.parse(message);
 
         switch (data.event) {
-          case "media":
-            if (openAiWs.readyState === WebSocket.OPEN) {
-              const audioAppend = {
-                type: "input_audio_buffer.append",
-                audio: data.media.payload,
-              };
-              openAiWs.send(JSON.stringify(audioAppend));
-            }
-            break;
+            case "media":
+                if (openAiWs.readyState === WebSocket.OPEN) {
+                  const audioAppend = {
+                    type: "input_audio_buffer.append",
+                    audio: data.media.payload,
+                  };
+                  openAiWs.send(JSON.stringify(audioAppend));
+                }
+                break;
 
           case "connected":
 
@@ -451,15 +449,9 @@ fastify.register(async (fastify) => {
           case "start":
             streamSid = data.start.streamSid;
             callSid = data.start.callSid;
-           
             console.log("Incoming stream has started", streamSid);
             console.log("CallSid:", callSid);
-
-            await initializeSession(); // Call initializeSession after capturing callSid
-            
-            
-            default:
-            console.log("Received non-media event:", data.event);
+            await initializeSession();
             break;
         }
       } catch (error) {
@@ -468,14 +460,14 @@ fastify.register(async (fastify) => {
     });
 
     // Handle connection close
-    connection.on("close", () => {
-      if (openAiWs.readyState === WebSocket.OPEN) openAiWs.close();
-      console.log("Client disconnected.");
-
-      // Output the final transcriptions
-      console.log("Final User Transcription:\n", userTranscription);
-      console.log("Final Assistant Transcription:\n", assistantTranscription);
-    });
+    connection.socket.on("close", () => {
+        if (openAiWs.readyState === WebSocket.OPEN) openAiWs.close();
+        console.log("Client disconnected.");
+  
+        // Output the final transcriptions
+        console.log("Final User Transcription:\n", userTranscription);
+        console.log("Final Assistant Transcription:\n", assistantTranscription);
+      });
 
     // Handle WebSocket close and errors
     openAiWs.on("close", () => {
