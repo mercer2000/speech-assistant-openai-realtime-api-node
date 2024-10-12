@@ -13,8 +13,7 @@ import twilio from "twilio";
 dotenv.config();
 
 // Retrieve the OpenAI API key and Supabase credentials from environment variables
-const { OPENAI_API_KEY, SUPABASE_URL, SUPABASE_KEY, TWILIO_ACCOUNT_SID, TWILO_TOKEN } = process.env;
-
+const { OPENAI_API_KEY, SUPABASE_URL, SUPABASE_KEY, TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN } = process.env;
 
 if (!OPENAI_API_KEY || !SUPABASE_URL || !SUPABASE_KEY) {
   console.error("Missing required environment variables. Please check your .env file.");
@@ -68,7 +67,7 @@ You are a voice assistant for Breeze Electric in Dallas, TX. Handle after-hours 
 // alloy, echo, or shimmer
 const VOICE = "shimmer";
 const PORT = process.env.PORT || 5050; // Allow dynamic port assignment
-const client = twilio(TWILIO_ACCOUNT_SID, TWILO_TOKEN);
+const client = twilio(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN);
 
 
 // List of Event Types to log to the console. See the OpenAI Realtime API Documentation: https://platform.openai.com/docs/api-reference/realtime
