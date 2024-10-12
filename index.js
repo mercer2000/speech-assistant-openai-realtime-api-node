@@ -22,7 +22,8 @@ if (!OPENAI_API_KEY || !SUPABASE_URL || !SUPABASE_KEY) {
 }
 
 // Initialize Supabase client
-const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
+const supabase = createClient(SUPABASE_URL, SUPABASE_KEY); 
+
 
 // Initialize Fastify
 const fastify = Fastify();
