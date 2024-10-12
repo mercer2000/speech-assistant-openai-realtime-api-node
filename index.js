@@ -104,6 +104,11 @@ let lastDrift = null;
 let lastAssistantItem;
 let summarySent = false;
 
+let openAiWs;
+let summaryReceived = false;
+let closeTimeout;
+
+
 // Initialize transcription storage
 let userTranscription = "";
 let assistantTranscription = "";
@@ -125,27 +130,33 @@ const checkForGoodbye = (text) => {
 };
 
 const sendSummaryRequest = () => {
-  if (summarySent) return;
-  summarySent = true;
-
-  const summaryRequest = {
-    type: "conversation.item.create",
-    item: {
-      type: "message",
-      role: "user",
-      content: [
-        {
-          type: "input_text",
-          text: "Please provide a JSON summary of our conversation, including the caller's name, phone number, address, issue description, urgency, and scheduled appointment time if applicable. Do not generate an audio response for this.",
-        },
-      ],
-    },
+    if (summarySent) return;
+    summarySent = true;
+  
+    const summaryRequest = {
+      type: "conversation.item.create",
+      item: {
+        type: "message",
+        role: "user",
+        content: [
+          {
+            type: "text",
+            text: "Please provide a JSON summary of our conversation, including the caller's name, phone number, address, issue description, urgency, and scheduled appointment time if applicable."
+          },
+        ],
+      },
+    };
+  
+    console.log("Sending summary request:", JSON.stringify(summaryRequest));
+    openAiWs.send(JSON.stringify(summaryRequest));
+    openAiWs.send(JSON.stringify({ type: "response.create" }));
+  
+    // Set a timeout to close the connection if summary is not received
+    closeTimeout = setTimeout(() => {
+      console.log("Summary not received in time. Closing connection.");
+      if (openAiWs.readyState === WebSocket.OPEN) openAiWs.close();
+    }, 10000); // Wait for 10 seconds
   };
-
-  console.log("Sending summary request:", JSON.stringify(summaryRequest));
-  openAiWs.send(JSON.stringify(summaryRequest));
-  openAiWs.send(JSON.stringify({ type: "response.create" }));
-};
 
 // Function to get the called number using Twilio API
 async function getCalledNumber(callSid) {
@@ -243,6 +254,8 @@ fastify.register(async (fastify) => {
     let userSaidGoodbye = false;
     let lastAudioDeltaTime = Date.now();
 
+    
+
     const initializeSession = async () => {
       if (sessionInitialized) return;
       if (!callSid || !openAiWsIsOpen) {
@@ -300,7 +313,25 @@ fastify.register(async (fastify) => {
       );
       openAiWs.send(JSON.stringify(initialConversationItem));
       openAiWs.send(JSON.stringify({ type: "response.create" }));
+
+      // Set a timeout to close the connection if summary is not received
+    closeTimeout = setTimeout(() => {
+        console.log("Summary not received in time. Closing connection.");
+        if (openAiWs.readyState === WebSocket.OPEN) openAiWs.close();
+    }, 10000); // Wait for 10 seconds
+
     };
+
+    const handleSummaryResponse = (content) => {
+        summaryReceived = true;
+        clearTimeout(closeTimeout);
+        console.log("Call Summary:", content);
+        // Here you can process the summary, e.g., save it to a database
+        
+        // Close the connection after processing the summary
+        if (openAiWs.readyState === WebSocket.OPEN) openAiWs.close();
+      };
+    
 
     // Open event for OpenAI WebSocket
     openAiWs.on("open", () => {
@@ -358,35 +389,22 @@ fastify.register(async (fastify) => {
       }
     };
 
-    // Modify the handleResponseDoneEvent function
     const handleResponseDoneEvent = (response) => {
-
-      
-
-      const outputItems = response.response.output;
-
-      console.log("Response done event received:", outputItems);
-
-      for (const item of outputItems) {
-
-        console.log ("Item role:", item);
-
-        if (item.role === "assistant") {
-          lastAssistantItem = item.id;
-
-          // Check if this is the summary response
-          if (summarySent && item.content && item.content[0].type === "text") {
-            console.log("Call Summary:", item.content[0].text);
-            // Here you can process the summary, e.g., save it to a database
-            break;
+        const outputItems = response.response.output;
+        for (const item of outputItems) {
+          if (item.role === "assistant") {
+            lastAssistantItem = item.id;
+            
+            if (item.content && item.content[0].type === "text") {
+              const text = item.content[0].text;
+              if (checkForGoodbye(text) && !summarySent) {
+                console.log("Assistant said goodbye. Requesting summary.");
+                sendSummaryRequest();
+              }
+            }
           }
         }
-      }
-      // If the assistant has said goodbye and we haven't sent the summary request yet, do it now
-      if (assistantSaidGoodbye && !summarySent) {
-        sendSummaryRequest();
-      }
-    };
+      };
 
     let audioDeltaTimeout = null;
 
@@ -398,6 +416,23 @@ fastify.register(async (fastify) => {
           // console.error("Error:", response.error);
           return;
         }
+
+        if (response.type === "error") {
+            console.error("Error:", response.error);
+            return;
+          }
+      
+          if (response.type === "response.text.delta" && summarySent) {
+            // This is likely the summary response
+            console.log("Received summary delta:", response.delta);
+            // You might want to accumulate these deltas to form the complete summary
+          }
+      
+          if (response.type === "response.text.done" && summarySent) {
+            // The complete summary has been received
+            handleSummaryResponse(response.text);
+          }
+
 
         if (
           response.type ===
@@ -485,6 +520,8 @@ fastify.register(async (fastify) => {
         );
       }
     });
+
+    
 
     // Handle incoming messages from Twilio
     connection.socket.on("message", async (message) => {
