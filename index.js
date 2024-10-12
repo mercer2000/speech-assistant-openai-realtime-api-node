@@ -59,10 +59,6 @@ You are a voice assistant for Breeze Electric in Dallas, TX. Handle after-hours 
 - For this demo, allow scheduling from any location.
 `;
 
-// Example usage (for demonstration purposes)
-console.log(SYSTEM_MESSAGE);
-
-
 
 // Constants
 const VOICE = "shimmer";
@@ -119,7 +115,7 @@ const checkForGoodbye = (text) => {
 async function lookupPrompt(phoneNumber) {
 
     console.log("Looking up prompt for phone number:", phoneNumber);
-    
+
      
     try {
       // First, lookup the tenant_id from the Organizations table
@@ -143,6 +139,9 @@ async function lookupPrompt(phoneNumber) {
   
       if (promptError) throw promptError;
       if (!promptData) throw new Error('Prompt not found');
+
+
+      console.log("Prompt found:", promptData.content);
   
       return promptData.content;
     } catch (error) {
@@ -308,9 +307,7 @@ fastify.register(async (fastify) => {
     // Listen for messages from the OpenAI WebSocket (and send to Twilio if necessary)
     openAiWs.on("message", (data) => {
       try {
-        const response = JSON.parse(data);
-
-        console.log("Received event:", response.type);
+        const response = JSON.parse(data);      
 
         if (response.type === "error") {
           console.error("Error:", response.error);
