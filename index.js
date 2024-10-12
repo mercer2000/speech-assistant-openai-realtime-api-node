@@ -6,7 +6,7 @@ import fastifyWs from "@fastify/websocket";
 // 1. Missing import for Supabase client
 import { createClient } from '@supabase/supabase-js';
 
-import twilio from "@twilio";
+import twilio from "twilio";
 
 
 // Load environment variables from .env file
