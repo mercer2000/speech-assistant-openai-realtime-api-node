@@ -6,11 +6,15 @@ import fastifyWs from "@fastify/websocket";
 // 1. Missing import for Supabase client
 import { createClient } from '@supabase/supabase-js';
 
+import twilio from "@twilio";
+
+
 // Load environment variables from .env file
 dotenv.config();
 
 // Retrieve the OpenAI API key and Supabase credentials from environment variables
-const { OPENAI_API_KEY, SUPABASE_URL, SUPABASE_KEY } = process.env;
+const { OPENAI_API_KEY, SUPABASE_URL, SUPABASE_KEY, TWILIO_ACCOUNT_SID, TWILO_TOKEN } = process.env;
+
 
 if (!OPENAI_API_KEY || !SUPABASE_URL || !SUPABASE_KEY) {
   console.error("Missing required environment variables. Please check your .env file.");
@@ -61,10 +65,12 @@ You are a voice assistant for Breeze Electric in Dallas, TX. Handle after-hours 
 
 
 // Constants
+// alloy, echo, or shimmer
 const VOICE = "shimmer";
 const PORT = process.env.PORT || 5050; // Allow dynamic port assignment
+const client = twilio(accountSid, authToken);
 
-// alloy, echo, or shimmer
+
 
 
 // List of Event Types to log to the console. See the OpenAI Realtime API Documentation: https://platform.openai.com/docs/api-reference/realtime
@@ -111,16 +117,28 @@ const checkForGoodbye = (text) => {
 };
 
 
+async function getCalledNumber(callSid) {
+    try {
+        const call = await client.calls(callSid).fetch();
+        console.log(`The called number is: ${call.to}`);
+        return call.to;
+    } catch (error) {
+        console.error('Error fetching call details:', error);
+    }
+}
+
+
 // Function to lookup tenant_id and prompt
-async function lookupPrompt(phoneNumber) {
+async function lookupPrompt(callSid) {   
+
+   let phoneNumber = getCalledNumber(callSid)
 
     console.log("Looking up prompt for phone number:", phoneNumber);
-
      
     try {
       // First, lookup the tenant_id from the Organizations table
       const { data: orgData, error: orgError } = await supabase
-        .from('Organizations')
+        .from('organizations')
         .select('tenant_id')
         .eq('phone_number', phoneNumber)
         .single();
@@ -186,11 +204,11 @@ fastify.register(async (fastify) => {
   
       let streamSid = null;
       let callSid = null;
-      let callTo = null;
+  
       let dynamicPrompt = null;
   
       const initializeSession = async () => {
-        if (callTo) {
+        if (callSid) {
           dynamicPrompt = await lookupPrompt(callSid);
         }
   
@@ -436,13 +454,9 @@ fastify.register(async (fastify) => {
           case "start":
             streamSid = data.start.streamSid;
             callSid = data.start.callSid;
-            callTo = data.start.to;
-
-
+           
             console.log("Incoming stream has started", streamSid);
             console.log("CallSid:", callSid);
-            console.log("CallTo:", callTo);
-
 
             await initializeSession(); // Call initializeSession after capturing callSid
             
