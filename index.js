@@ -146,9 +146,9 @@ async function lookupPrompt(callSid) {
   console.log("Looking up prompt for phone number:", phoneNumber);
 
   try {
-    // First, lookup the tenant_id from the organizations table
+    // First, lookup the tenant_id from the phone number talbe table
     const { data: orgData, error: orgError } = await supabase
-      .from("organizations")
+      .from("phone_numbers")
       .select("tenant_id")
       .eq("phone_number", phoneNumber)
       .single();
@@ -215,6 +215,9 @@ fastify.register(async (fastify) => {
 
     let openAiWsIsOpen = false;
     let sessionInitialized = false;
+    let assistantSaidGoodbye = false;
+    let userSaidGoodbye = false;
+
 
     const initializeSession = async () => {
       if (sessionInitialized) return;
@@ -341,93 +344,90 @@ fastify.register(async (fastify) => {
       }
     };
 
-    // Listen for messages from the OpenAI WebSocket (and send to Twilio if necessary)
     openAiWs.on("message", (data) => {
-      try {
-        const response = JSON.parse(data);
-
-        if (response.type === "error") {
-          console.error("Error:", response.error);
-          return;
-        }
-
-        if (LOG_EVENT_TYPES.includes(response.type)) {
-          console.log(`Received event: ${response.type}`, response);
-        }
-
-        // Capture user transcription
-        if (
-          response.type ===
-          "conversation.item.input_audio_transcription.completed"
-        ) {
-          console.log("User transcription:", response.transcript);
-          userTranscription += response.transcript;
-
-          if (checkForGoodbye(response.transcript)) {
-            console.log("User said goodbye. Ending call.");
-            // Close the connection
-            if (
-              connection &&
-              connection.socket &&
-              connection.socket.readyState === WebSocket.OPEN
-            ) {
-              connection.socket.close();
-            }
+        try {
+          const response = JSON.parse(data);
+      
+          if (response.type === "error") {
+            console.error("Error:", response.error);
+            return;
           }
-        }
-
-        // Send audio to Twilio
-        if (response.type === "response.audio.delta" && response.delta) {
-          const audioDelta = {
-            event: "media",
-            streamSid: streamSid,
-            media: {
-              payload: Buffer.from(response.delta, "base64").toString("base64"),
-            },
-          };
+      
+          if (LOG_EVENT_TYPES.includes(response.type)) {
+            console.log(`Received event: ${response.type}`, response);
+          }
+      
+          // Capture user transcription
           if (
-            connection.socket &&
-            connection.socket.readyState === WebSocket.OPEN
+            response.type ===
+            "conversation.item.input_audio_transcription.completed"
           ) {
-            connection.socket.send(JSON.stringify(audioDelta));
+            console.log("User transcription:", response.transcript);
+            userTranscription += response.transcript;
+      
+            if (checkForGoodbye(response.transcript)) {
+              console.log("User said goodbye. Will close the call after assistant responds.");
+              userSaidGoodbye = true;
+            }
           }
-        }
-
-        // When assistant's response is done
-        if (response.type === "response.audio_transcript.done") {
-          console.log("Assistant transcription done:", response.transcript);
-          assistantTranscription += response.transcript + "\n";
-
-          if (checkForGoodbye(response.transcript)) {
-            console.log("Assistant said goodbye. Ending call.");
+      
+          // Send audio to Twilio
+          if (response.type === "response.audio.delta" && response.delta) {
+            const audioDelta = {
+              event: "media",
+              streamSid: streamSid,
+              media: {
+                payload: Buffer.from(response.delta, "base64").toString("base64"),
+              },
+            };
             if (
-              connection &&
               connection.socket &&
               connection.socket.readyState === WebSocket.OPEN
             ) {
-              connection.socket.close();
+              connection.socket.send(JSON.stringify(audioDelta));
             }
           }
+      
+          // When assistant's response is done
+          if (response.type === "response.audio_transcript.done") {
+            console.log("Assistant transcription done:", response.transcript);
+            assistantTranscription += response.transcript + "\n";
+      
+            if (checkForGoodbye(response.transcript)) {
+              console.log("Assistant said goodbye. Will close the call after response is done.");
+              assistantSaidGoodbye = true;
+            }
+          }
+      
+          // Handle speech started event
+          if (response.type === "input_audio_buffer.speech_started") {
+            handleSpeechStartedEvent(response);
+          }
+      
+          if (response.type === "response.done") {
+            handleResponseDoneEvent(response);
+      
+            if (assistantSaidGoodbye) {
+              console.log("Assistant has finished speaking. Closing the call.");
+              if (
+                connection &&
+                connection.socket &&
+                connection.socket.readyState === WebSocket.OPEN
+              ) {
+                connection.socket.close();
+              }
+            }
+          }
+        } catch (error) {
+          console.error(
+            "Error processing OpenAI message:",
+            error.message,
+            "Raw message:",
+            data
+          );
         }
-
-        // Handle speech started event
-        if (response.type === "input_audio_buffer.speech_started") {
-          handleSpeechStartedEvent(response);
-        }
-
-        if (response.type === "response.done") {
-          handleResponseDoneEvent(response);
-        }
-      } catch (error) {
-        console.error(
-          "Error processing OpenAI message:",
-          error.message,
-          "Raw message:",
-          data
-        );
-      }
-    });
-
+      });
+      
     // Handle incoming messages from Twilio
     connection.socket.on("message", async (message) => {
       try {
