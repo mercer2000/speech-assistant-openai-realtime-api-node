@@ -3,17 +3,23 @@ import WebSocket from "ws";
 import dotenv from "dotenv";
 import fastifyFormBody from "@fastify/formbody";
 import fastifyWs from "@fastify/websocket";
+// 1. Missing import for Supabase client
+import { createClient } from '@supabase/supabase-js';
 
 // Load environment variables from .env file
 dotenv.config();
 
-// Retrieve the OpenAI API key from environment variables.
-const { OPENAI_API_KEY } = process.env;
+// Retrieve the OpenAI API key and Supabase credentials from environment variables
+const { OPENAI_API_KEY, SUPABASE_URL, SUPABASE_ANON_KEY } = process.env;
 
-if (!OPENAI_API_KEY) {
-  console.error("Missing OpenAI API key. Please set it in the .env file.");
+if (!OPENAI_API_KEY || !SUPABASE_URL || !SUPABASE_ANON_KEY) {
+  console.error("Missing required environment variables. Please check your .env file.");
   process.exit(1);
 }
+
+// Initialize Supabase client
+const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
 
 // Initialize Fastify
 const fastify = Fastify();
@@ -82,6 +88,8 @@ const LOG_EVENT_TYPES = [
   "response.audio_transcript.done",
 ];
 
+let goodbyeDetected = false;
+
 // Track drift between OpenAI and system clocks, and the assistant's last Item ID
 let localStartTime;
 let lastDrift = null;
@@ -106,6 +114,40 @@ const checkForGoodbye = (text) => {
   return goodbyes.some((phrase) => textLower.includes(phrase));
 };
 
+
+// Function to lookup tenant_id and prompt
+async function lookupPrompt(phoneNumber) {
+    try {
+      // First, lookup the tenant_id from the Organizations table
+      const { data: orgData, error: orgError } = await supabase
+        .from('Organizations')
+        .select('tenant_id')
+        .eq('phone_number', phoneNumber)
+        .single();
+  
+      if (orgError) throw orgError;
+      if (!orgData) throw new Error('Organization not found');
+  
+      const tenant_id = orgData.tenant_id;
+  
+      // Next, lookup the prompt from the prompts table
+      const { data: promptData, error: promptError } = await supabase
+        .from('prompts')
+        .select('content')
+        .eq('tenant_id', tenant_id)
+        .single();
+  
+      if (promptError) throw promptError;
+      if (!promptData) throw new Error('Prompt not found');
+  
+      return promptData.content;
+    } catch (error) {
+      console.error('Error looking up prompt:', error);
+      return null;
+    }
+  }
+  
+
 // Root Route
 fastify.get("/", async (request, reply) => {
   reply.send({ message: "Twilio Media Stream Server is running!" });
@@ -123,49 +165,52 @@ fastify.all("/incoming-call", async (request, reply) => {
   reply.type("text/xml").send(twimlResponse);
 });
 
-// WebSocket route for media-stream
+// Modify the WebSocket route to include dynamic prompt lookup
 fastify.register(async (fastify) => {
-  fastify.get("/media-stream", { websocket: true }, (connection, req) => {
-    console.log("Client connected");
-    console.log(`Incoming call from ${req.raw.url}`);
-
-    const openAiWs = new WebSocket(
-      "wss://api.openai.com/v1/realtime?model=gpt-4o-realtime-preview-2024-10-01",
-      {
-        headers: {
-          Authorization: `Bearer ${OPENAI_API_KEY}`,
-          "OpenAI-Beta": "realtime=v1",
-        },
-      }
-    );
-
-    let streamSid = null;
-    let callSid = null;
-    let sessionMessage = null;
-
-    const initializeSession = () => {
-      const sessionUpdate = {
-        type: "session.update",
-        session: {
-          turn_detection: { type: "server_vad" },
-          input_audio_format: "g711_ulaw",
-          output_audio_format: "g711_ulaw",
-          voice: VOICE,
-          instructions: SYSTEM_MESSAGE,
-          modalities: ["text", "audio"],
-          temperature: 0.8,
-          input_audio_transcription: {
-            model: "whisper-1",
+    fastify.get("/media-stream", { websocket: true }, async (connection, req) => {
+      console.log("Client connected");
+      console.log(`Incoming call from ${req.raw.url}`);
+  
+      const openAiWs = new WebSocket(
+        "wss://api.openai.com/v1/realtime?model=gpt-4o-realtime-preview-2024-10-01",
+        {
+          headers: {
+            Authorization: `Bearer ${OPENAI_API_KEY}`,
+            "OpenAI-Beta": "realtime=v1",
           },
-        },
+        }
+      );
+  
+      let streamSid = null;
+      let callSid = null;
+      let dynamicPrompt = null;
+  
+      const initializeSession = async () => {
+        if (callSid) {
+          dynamicPrompt = await lookupPrompt(callSid);
+        }
+  
+        const sessionUpdate = {
+          type: "session.update",
+          session: {
+            turn_detection: { type: "server_vad" },
+            input_audio_format: "g711_ulaw",
+            output_audio_format: "g711_ulaw",
+            voice: VOICE,
+            instructions: dynamicPrompt || SYSTEM_MESSAGE, // Use dynamic prompt if available, otherwise fallback to default
+            modalities: ["text", "audio"],
+            temperature: 0.8,
+            input_audio_transcription: {
+              model: "whisper-1",
+            },
+          },
+        };
+  
+        console.log("Sending session update:", JSON.stringify(sessionUpdate));
+        openAiWs.send(JSON.stringify(sessionUpdate));
+  
+        sendInitialConversationItem();
       };
-
-      console.log("Sending session update:", JSON.stringify(sessionUpdate));
-      openAiWs.send(JSON.stringify(sessionUpdate));
-
-      // Uncomment the following line to have AI speak first:
-      sendInitialConversationItem();
-    };
 
     const sendInitialConversationItem = () => {
       const initialConversationItem = {
@@ -302,18 +347,21 @@ fastify.register(async (fastify) => {
 
         // When assistant's response is done
         if (response.type === "response.audio_transcript.done") {
-          console.log("Assistant transcription done:", response.transcript);
-
-          if (checkForGoodbye(response.transcript)) {
-            console.log("User said goodbye. Ending call.");
-            // Close the connection
-            if (connection) {
-              connection.close();
+            console.log("Assistant transcription done:", response.transcript);
+            assistantTranscription += response.transcript + "\n";
+      
+            if (checkForGoodbye(response.transcript)) {
+              console.log("Goodbye detected in assistant's response. Preparing to end call.");
+              goodbyeDetected = true;
             }
-          }
-
-          // You can process or store the assistantTranscription here
-          assistantTranscription += "\n";
+      
+            if (goodbyeDetected) {
+              console.log("Goodbye confirmed. Ending call after this audio segment.");
+              if (connection) {
+                connection.close();
+              }
+              goodbyeDetected = false; // Reset the flag
+            }
         }
 
         if (response.type === "session.updated") {
@@ -325,10 +373,7 @@ fastify.register(async (fastify) => {
           handleSpeechStartedEvent(response);
         }
 
-        // We can get the following event while Twilio is still playing audio from the AI
-        if (response.type === "input_audio_buffer.speech_started") {
-          handleSpeechStartedEvent(response);
-        }
+      
         if (response.type === "response.done") {
           handleResponseDoneEvent(response);
         }
@@ -343,7 +388,7 @@ fastify.register(async (fastify) => {
     });
 
     // Handle incoming messages from Twilio
-    connection.on("message", (message) => {
+    connection.on("message", async (message) => {
       try {
         const data = JSON.parse(message);
 
@@ -360,7 +405,23 @@ fastify.register(async (fastify) => {
 
           case "connected":
 
+          case "mark":
+        
+          // This event is sent by Twilio when speech ends
+          if (goodbyeDetected) {
+          console.log("User finished speaking after goodbye detected. Ending call.");
+          connection.close();
+          }
+          break;
+            
           case "start":
+            streamSid = data.start.streamSid;
+            callSid = data.start.callSid;
+            console.log("Incoming stream has started", streamSid);
+            console.log("CallSid:", callSid);
+            await initializeSession(); // Call initializeSession after capturing callSid
+            break;
+
             streamSid = data.start.streamSid;
             console.log("Incoming stream has started", streamSid);
 
