@@ -114,6 +114,8 @@ async function processEndOfCall(transcription) {
 
 // Function to lookup tenant_id and prompt
 async function lookupPrompt(phoneNumber) {
+
+    console.log("Looking up prompt for phone number:", phoneNumber);
   try {
     const { data: orgData, error: orgError } = await supabase
       .from('Organizations')
@@ -242,7 +244,7 @@ fastify.all("/incoming-call", async (request, reply) => {
 fastify.register(async (fastify) => {
   fastify.get("/media-stream", { websocket: true }, async (connection, req) => {
     console.log("Client connected");
-    console.log(`Incoming call from ${req.raw.url}`);
+    
 
     const openAiWs = new WebSocket(
       "wss://api.openai.com/v1/realtime?model=gpt-4o-realtime-preview-2024-10-01",
@@ -261,8 +263,10 @@ fastify.register(async (fastify) => {
     const initializeSession = async () => {
       if (callSid) {
         dynamicPrompt = await lookupPrompt(callSid);
+        console.log ("Dynamic prompt:", dynamicPrompt); 
       }
 
+       
       const sessionUpdate = {
         type: "session.update",
         session: {
