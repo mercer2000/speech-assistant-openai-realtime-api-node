@@ -123,6 +123,29 @@ const checkForGoodbye = (text) => {
   return goodbyes.some((phrase) => textLower.includes(phrase));
 };
 
+const sendSummaryRequest = () => {
+  if (summarySent) return;
+  summarySent = true;
+
+  const summaryRequest = {
+    type: "conversation.item.create",
+    item: {
+      type: "message",
+      role: "user",
+      content: [
+        {
+          type: "input_text",
+          text: "Please provide a JSON summary of our conversation, including the caller's name, phone number, address, issue description, urgency, and scheduled appointment time if applicable. Do not generate an audio response for this.",
+        },
+      ],
+    },
+  };
+
+  console.log("Sending summary request:", JSON.stringify(summaryRequest));
+  openAiWs.send(JSON.stringify(summaryRequest));
+  openAiWs.send(JSON.stringify({ type: "response.create" }));
+};
+
 // Function to get the called number using Twilio API
 async function getCalledNumber(callSid) {
   try {
@@ -218,7 +241,6 @@ fastify.register(async (fastify) => {
     let assistantSaidGoodbye = false;
     let userSaidGoodbye = false;
     let lastAudioDeltaTime = Date.now();
-
 
     const initializeSession = async () => {
       if (sessionInitialized) return;
@@ -335,114 +357,125 @@ fastify.register(async (fastify) => {
       }
     };
 
+    // Modify the handleResponseDoneEvent function
     const handleResponseDoneEvent = (response) => {
       const outputItems = response.response.output;
       for (const item of outputItems) {
         if (item.role === "assistant") {
           lastAssistantItem = item.id;
-          break; // Consider the first relevant assistant item
+
+          // Check if this is the summary response
+          if (summarySent && item.content && item.content[0].type === "text") {
+            console.log("Call Summary:", item.content[0].text);
+            // Here you can process the summary, e.g., save it to a database
+            break;
+          }
         }
+      }
+      // If the assistant has said goodbye and we haven't sent the summary request yet, do it now
+      if (assistantSaidGoodbye && !summarySent) {
+        sendSummaryRequest();
       }
     };
 
     let audioDeltaTimeout = null;
 
     openAiWs.on("message", (data) => {
-        try {
-          const response = JSON.parse(data);
-      
-          if (response.type === "error") {
-            console.error("Error:", response.error);
-            return;
-          }
-     
-          if (
-            response.type ===
-            "conversation.item.input_audio_transcription.completed"
-          ) {
-            console.log("User transcription:", response.transcript);
-            userTranscription += response.transcript;
-      
-            if (checkForGoodbye(response.transcript)) {
-              console.log(
-                "User said goodbye. Will close the call after assistant responds."
-              );
-              userSaidGoodbye = true;
-            }
-          }
-      
-          // Send audio to Twilio and manage the timeout
-    if (response.type === "response.audio.delta" && response.delta) {
-        const audioDelta = {
-          event: "media",
-          streamSid: streamSid,
-          media: {
-            payload: Buffer.from(response.delta, "base64").toString("base64"),
-          },
-        };
-        if (
-          connection.socket &&
-          connection.socket.readyState === WebSocket.OPEN
-        ) {
-          connection.socket.send(JSON.stringify(audioDelta));
+      try {
+        const response = JSON.parse(data);
+
+        if (response.type === "error") {
+          console.error("Error:", response.error);
+          return;
         }
 
-         // Update the lastAudioDeltaTime when receiving a delta
-         lastAudioDeltaTime = Date.now();
-  
-        // Reset the timeout since we received new audio data
-        if (audioDeltaTimeout) {
-          clearTimeout(audioDeltaTimeout);
+        if (
+          response.type ===
+          "conversation.item.input_audio_transcription.completed"
+        ) {
+          console.log("User transcription:", response.transcript);
+          userTranscription += response.transcript;
+
+          if (checkForGoodbye(response.transcript)) {
+            console.log(
+              "User said goodbye. Will close the call after assistant responds."
+            );
+            userSaidGoodbye = true;
+          }
         }
-  
-        // If assistant said goodbye, start the timeout to close the connection
-        if (assistantSaidGoodbye) {
-          audioDeltaTimeout = setTimeout(() => {
-            console.log("Assistant's audio has finished. Closing the call.");
-            if (
-              connection &&
-              connection.socket &&
-              connection.socket.readyState === WebSocket.OPEN
-            ) {
-              connection.socket.close();
-            }
-          }, 1000); // Wait for 1 second of inactivity
+
+        // Send audio to Twilio and manage the timeout
+        if (response.type === "response.audio.delta" && response.delta) {
+          const audioDelta = {
+            event: "media",
+            streamSid: streamSid,
+            media: {
+              payload: Buffer.from(response.delta, "base64").toString("base64"),
+            },
+          };
+          if (
+            connection.socket &&
+            connection.socket.readyState === WebSocket.OPEN
+          ) {
+            connection.socket.send(JSON.stringify(audioDelta));
+          }
+
+          // Update the lastAudioDeltaTime when receiving a delta
+          lastAudioDeltaTime = Date.now();
+
+          // Reset the timeout since we received new audio data
+          if (audioDeltaTimeout) {
+            clearTimeout(audioDeltaTimeout);
+          }
+
+          // If assistant said goodbye, start the timeout to close the connection
+          if (assistantSaidGoodbye) {
+            audioDeltaTimeout = setTimeout(() => {
+              console.log("Assistant's audio has finished. Closing the call.");
+              if (
+                connection &&
+                connection.socket &&
+                connection.socket.readyState === WebSocket.OPEN
+              ) {
+                connection.socket.close();
+              }
+            }, 1000); // Wait for 1 second of inactivity
+          }
         }
-      }
-  
-      
-          // When assistant's response is done
-    if (response.type === "response.audio_transcript.done") {
-        console.log("Assistant transcription done:", response.transcript);
-        assistantTranscription += response.transcript + "\n";
-  
-        if (checkForGoodbye(response.transcript)) {
-          console.log(
-            "Assistant said goodbye. Will close the call after all audio is sent."
-          );
-          assistantSaidGoodbye = true;
+
+        // When assistant's response is done
+        if (response.type === "response.audio_transcript.done") {
+          console.log("Assistant transcription done:", response.transcript);
+          assistantTranscription += response.transcript + "\n";
+
+          if (checkForGoodbye(response.transcript)) {
+            console.log(
+              "Assistant said goodbye. Will request summary before closing the call."
+            );
+            assistantSaidGoodbye = true;
+            sendSummaryRequest();
+          }
         }
-      }
-      
+
         // Handle speech started event
-    if (response.type === "input_audio_buffer.speech_started") {
-        handleSpeechStartedEvent(response);
+        if (response.type === "input_audio_buffer.speech_started") {
+          handleSpeechStartedEvent(response);
+        }
+
+        // No need to close the connection in response.done
+        if (response.type === "response.done") {
+          handleResponseDoneEvent(response);
+        }
+      } catch (error) {
+        console.error(
+          "Error processing OpenAI message:",
+          error.message,
+          "Raw message:",
+          data
+        );
       }
-      
-          // No need to close the connection in response.done
-    if (response.type === "response.done") {
-        handleResponseDoneEvent(response);
-      }
-    } catch (error) {
-      console.error(
-        "Error processing OpenAI message:",
-        error.message,
-        "Raw message:",
-        data
-      );
-    }
-  });
-      
+    });
+
     // Handle incoming messages from Twilio
     connection.socket.on("message", async (message) => {
       try {
@@ -474,7 +507,12 @@ fastify.register(async (fastify) => {
             break;
         }
       } catch (error) {
-        console.error("Error parsing message:", error.message, "Message:", message);
+        console.error(
+          "Error parsing message:",
+          error.message,
+          "Message:",
+          message
+        );
       }
     });
 
