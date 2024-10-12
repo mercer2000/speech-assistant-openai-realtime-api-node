@@ -186,6 +186,7 @@ fastify.register(async (fastify) => {
   
       let streamSid = null;
       let callSid = null;
+      let callTo = null;
       let dynamicPrompt = null;
   
       const initializeSession = async () => {
@@ -211,6 +212,23 @@ fastify.register(async (fastify) => {
   
         console.log("Sending session update:", JSON.stringify(sessionUpdate));
         openAiWs.send(JSON.stringify(sessionUpdate));
+
+          // Wait for a short time to ensure the initial session update is processed
+        await new Promise(resolve => setTimeout(resolve, 100));
+
+        // Now update the session with the dynamic prompt
+        const promptSessionUpdate = {
+            type: "session.update",
+            session: {
+            instructions: dynamicPrompt || SYSTEM_MESSAGE,
+            },
+        };
+
+        console.log("Sending prompt session update:", JSON.stringify(promptSessionUpdate));
+        openAiWs.send(JSON.stringify(promptSessionUpdate));
+
+        // Wait for a short time to ensure the prompt session update is processed
+        await new Promise(resolve => setTimeout(resolve, 100));
   
         sendInitialConversationItem();
       };
@@ -459,29 +477,6 @@ fastify.register(async (fastify) => {
   });
 });
 
-const lookupSessionMessage = async (callSid) => {
-  try {
-    // Implement your lookup logic here, e.g., database query
-    const sessionMessage = await yourLookupFunction(callSid);
-
-    if (sessionMessage) {
-      const sessionUpdate = {
-        type: "session.update",
-        session: {
-          // ... other session details
-          instructions: sessionMessage,
-        },
-      };
-      console.log(
-        "Sending custom session update:",
-        JSON.stringify(sessionUpdate)
-      );
-      openAiWs.send(JSON.stringify(sessionUpdate));
-    }
-  } catch (error) {
-    console.error("Error looking up session message:", error);
-  }
-};
 
 fastify.listen({ port: PORT, host: "0.0.0.0" }, (err) => {
   if (err) {
