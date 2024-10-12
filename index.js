@@ -360,6 +360,9 @@ fastify.register(async (fastify) => {
 
     // Modify the handleResponseDoneEvent function
     const handleResponseDoneEvent = (response) => {
+
+        console.log("Response done event received:", response);
+        
       const outputItems = response.response.output;
       for (const item of outputItems) {
         if (item.role === "assistant") {
