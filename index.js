@@ -123,8 +123,8 @@ async function lookupPrompt(phoneNumber) {
         .from('Organizations')
         .select('tenant_id')
         .eq('phone_number', phoneNumber)
-        .single();
-  
+        .limit(1)
+        .single();  
       if (orgError) throw orgError;
       if (!orgData) throw new Error('Organization not found');
   
@@ -135,6 +135,7 @@ async function lookupPrompt(phoneNumber) {
         .from('prompts')
         .select('content')
         .eq('tenant_id', tenant_id)
+        .limit(1)
         .single();
   
       if (promptError) throw promptError;
