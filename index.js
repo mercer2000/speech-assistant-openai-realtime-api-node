@@ -189,7 +189,7 @@ fastify.register(async (fastify) => {
       let dynamicPrompt = null;
   
       const initializeSession = async () => {
-        if (callSid) {
+        if (callTo) {
           dynamicPrompt = await lookupPrompt(callSid);
         }
   
@@ -418,18 +418,18 @@ fastify.register(async (fastify) => {
           case "start":
             streamSid = data.start.streamSid;
             callSid = data.start.callSid;
+            callTo = data.start.to;
+
+
             console.log("Incoming stream has started", streamSid);
             console.log("CallSid:", callSid);
+            console.log("CallTo:", callTo);
+
+
             await initializeSession(); // Call initializeSession after capturing callSid
-            break;
-
-            streamSid = data.start.streamSid;
-            console.log("Incoming stream has started", streamSid);
-
-            callSid = data.start.callSid;
-            console.log("CallSid:", callSid);
-            break;
-          default:
+            
+            
+            default:
             console.log("Received non-media event:", data.event);
             break;
         }
