@@ -117,6 +117,10 @@ const checkForGoodbye = (text) => {
 
 // Function to lookup tenant_id and prompt
 async function lookupPrompt(phoneNumber) {
+
+    console.log("Looking up prompt for phone number:", phoneNumber);
+    
+     
     try {
       // First, lookup the tenant_id from the Organizations table
       const { data: orgData, error: orgError } = await supabase
@@ -221,7 +225,7 @@ fastify.register(async (fastify) => {
           content: [
             {
               type: "input_text",
-              text: 'Greet the user with "Hello there! How can I help you?"',
+              text: 'Greet the user with "Thank you for calling. How can I help you?"',
             },
           ],
         },
