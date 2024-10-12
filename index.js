@@ -68,9 +68,7 @@ You are a voice assistant for Breeze Electric in Dallas, TX. Handle after-hours 
 // alloy, echo, or shimmer
 const VOICE = "shimmer";
 const PORT = process.env.PORT || 5050; // Allow dynamic port assignment
-const client = twilio(accountSid, authToken);
-
-
+const client = twilio(TWILIO_ACCOUNT_SID, TWILO_TOKEN);
 
 
 // List of Event Types to log to the console. See the OpenAI Realtime API Documentation: https://platform.openai.com/docs/api-reference/realtime
