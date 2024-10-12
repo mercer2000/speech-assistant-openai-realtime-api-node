@@ -102,6 +102,7 @@ let goodbyeDetected = false;
 let localStartTime;
 let lastDrift = null;
 let lastAssistantItem;
+let summarySent = false;
 
 // Initialize transcription storage
 let userTranscription = "";
